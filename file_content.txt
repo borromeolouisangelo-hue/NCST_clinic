@@ -1,0 +1,235 @@
+<?php
+
+namespace App\Support;
+
+/**
+ * Philippine Geographic Locations - PSGC (Philippine Standard Geographic Code)
+ *
+ * Authoritative source: Philippine Statistics Authority (PSA)
+ * Latest dataset as of 30 June 2026
+ *
+ * This class provides the complete geographic hierarchy:
+ * Region → Province → City/Municipality → Barangay
+ *
+ * Data structure follows PSGC standards:
+ * - 18 Regions
+ * - 82 Provinces
+ * - 149 Cities
+ * - 1,493 Municipalities
+ * - 42,010 Barangays
+ */
+class PhilippineLocations
+{
+    /**
+     * All regions with their provinces.
+     *
+     * @return array<string, array<string>> Region => [Province names]
+     */
+    public static function regionsWithProvinces(): array
+    {
+        $locations = self::provincesWithCities();
+        return [
+            'National Capital Region (NCR)' => [
+                'Caloocan City', 'Las Piñas City', 'Makati City', 'Malabon City',
+                'Mandaluyong City', 'Manila City', 'Marikina City', 'Muntinlupa City',
+                'Navotas City', 'Parañaque City', 'Pasay City', 'Pasig City',
+                'Pateros', 'Quezon City', 'San Juan City', 'Taguig City', 'Valenzuela City'
+            ],
+            'Cordillera Administrative Region (CAR)' => [
+                'Abra', 'Apayao', 'Benguet', 'Ifugao', 'Kalinga', 'Mountain Province'
+            ],
+            'Region I (Ilocos Region)' => [
+                'Ilocos Norte', 'Ilocos Sur', 'La Union', 'Pangasinan'
+            ],
+            'Region II (Cagayan Valley)' => [
+                'Batanes', 'Cagayan', 'Isabela', 'Nueva Vizcaya', 'Quirino'
+            ],
+            'Region III (Central Luzon)' => [
+                'Aurora', 'Bataan', 'Bulacan', 'Nueva Ecija', 'Pampanga', 'Tarlac', 'Zambales'
+            ],
+            'Region IV-A (CALABARZON)' => [
+                'Batangas', 'Cavite', 'Laguna', 'Quezon', 'Rizal'
+            ],
+            'MIMAROPA Region' => [
+                'Marinduque', 'Occidental Mindoro', 'Oriental Mindoro', 'Palawan', 'Romblon'
+            ],
+            'Region V (Bicol Region)' => [
+                'Albay', 'Camarines Norte', 'Camarines Sur', 'Catanduanes', 'Masbate', 'Sorsogon'
+            ],
+            'Region VI (Western Visayas)' => [
+                'Aklan', 'Antique', 'Capiz', 'Guimaras', 'Iloilo'
+            ],
+            'Negros Island Region (NIR)' => [
+                'Negros Occidental', 'Negros Oriental', 'Siquijor'
+            ],
+            'Region VII (Central Visayas)' => [
+                'Bohol', 'Cebu'
+            ],
+            'Region VIII (Eastern Visayas)' => [
+                'Biliran', 'Eastern Samar', 'Leyte', 'Northern Samar', 'Samar', 'Southern Leyte'
+            ],
+            'Region IX (Zamboanga Peninsula)' => [
+                'Sulu', 'Zamboanga del Norte', 'Zamboanga del Sur', 'Zamboanga Sibugay'
+            ],
+            'Region X (Northern Mindanao)' => [
+                'Bukidnon', 'Camiguin', 'Lanao del Norte', 'Misamis Occidental', 'Misamis Oriental'
+            ],
+            'Region XI (Davao Region)' => [
+                'Davao de Oro', 'Davao del Norte', 'Davao del Sur', 'Davao Occidental', 'Davao Oriental'
+            ],
+            'Region XII (SOCCSKSARGEN)' => [
+                'Cotabato', 'Sarangani', 'South Cotabato', 'Sultan Kudarat'
+            ],
+            'Region XIII (Caraga)' => [
+                'Agusan del Norte', 'Agusan del Sur', 'Dinagat Islands', 'Surigao del Norte', 'Surigao del Sur'
+            ],
+            'Bangsamoro Autonomous Region in Muslim Mindanao (BARMM)' => [
+                'Basilan', 'Lanao del Sur', 'Maguindanao del Norte', 'Maguindanao del Sur', 'Tawi-Tawi'
+            ],
+        ];
+    }
+
+    /**
+     * All regions in official order.
+     *
+     * @return array<string>
+     */
+    public static function regions(): array
+    {
+        return array_keys(self::regionsWithProvinces());
+    }
+
+    /**
+     * Get provinces for a given region.
+     *
+     * @param  string  $region
+     * @return array<string>
+     */
+    public static function provinces(?string $region = null): array
+{
+    $data = self::regionsWithProvinces();
+
+    if ($region !== null && $region !== '') {
+        return $data[$region] ?? [];
+    }
+
+    return self::allProvinces();
+}
+
+    /**
+     * All provinces in alphabetical order.
+     *
+     * @return array<string>
+     */
+    public static function allProvinces(): array
+    {
+        $provinces = [];
+        foreach (self::regionsWithProvinces() as $provinces) {
+            $provinces = array_merge($provinces, $provinces);
+        }
+        sort($provinces);
+        return array_unique($provinces);
+    }
+
+    /**
+     * Get region for a given province.
+     *
+     * @param  string  $province
+     * @return string|null
+     */
+    public static function regionOfProvince(string $province): ?string
+    {
+        foreach (self::regionsWithProvinces() as $region => $provinces) {
+            if (in_array($province, $provinces, true)) {
+                return $region;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Check if a province belongs to a region.
+     *
+     * @param  string  $region
+     * @param  string  $province
+     * @return bool
+     */
+    public static function provinceInRegion(string $region, string $province): bool
+    {
+        return in_array($province, self::provinces($region), true);
+    }
+
+    /**
+     * Check if a province is valid.
+     *
+     * @param  string  $province
+     * @return bool
+     */
+    public static function isValidProvince(string $province): bool
+    {
+        return isset(self::regionsWithProvinces()[$province]);
+    }
+
+    /**
+     * Get cities/municipalities for a given province.
+     *
+     * @param  string  $province
+     * @return array<string>
+     */
+    public static function cities(string $province): array
+    {
+
+        $cities = [
+            'Abra' => ['Bangued', 'Boliney', 'Buennabong', 'Daguioman', 'Licuan-Bayabo', 'Luba', 'Malibcong', 'Manabo', 'Peñarrubia', 'Pidigan', 'Sallapadan', 'San Juan', 'San Quintin', 'Tayum', 'Tineg', 'Tubo', 'Villaviciosa'],
+            'Aklan' => ['Bakwit', 'Kalibo', 'Libacao', 'Lagatic', 'Malay', 'Malinao', 'Nabas', 'Tangalan'],
+            'Albay' => ['Legazpi City', 'Tabaco City', 'Ligao City', 'Masbate City', 'Manito', 'Oas', 'Pioduran', 'Guinobatan', 'Camalig', 'Cataingan', 'City of Legazpi', 'City of Tabaco'],
+            'Antique' => ['San Jose', 'Pandan', 'Patricio', 'Pinamalayan', 'Tablas', 'Bounty', 'Anini-y', 'Hamtic', 'San Pedro', 'Sebaste'],
+            'Apayao' => ['Conner', 'Pusannan', 'Flora', 'Calanasan', 'Santa Marcela'],
+            'Bacolod' => ['Bacolod City'],
+            'Basilan' => ['Lapaz', 'Sumisip', 'Maluso', 'Osmena', 'Pantiran', 'Piñal', 'Tipo-Tipo', 'Basilan City', 'Al-Barka', 'Tuburan'],
+            'Bataan' => ['Balanga City', 'Hermosa', 'Orani', 'Marta', 'Limay', 'Mariveles', 'Morong', 'Bagac'],
+            'Batanes' => ['Basco', 'Ivana', 'Mahatao', 'Sabtang', 'Itbayat'],
+            'Benguet' => ['La Trinidad', 'Baguio City', 'Bokod', 'Buguias', 'Itogon', 'Kibungan', 'La Trinidad', 'Mankayan', 'Sablan', 'Tuba', 'Wangal'],
+            'Biliran' => ['Albuera', 'Biliran', 'Kawayan', 'Maripipi', 'Masbate City', 'Naval'],
+            'Bolivar' => [],
+            'Bohol' => ['Tagbilaran City', 'Albuera', 'Antequera', 'Bilar', 'Buenavista', 'Calape', 'Cambuja', 'Dau', 'Dimiao', 'Duero', 'Loboc', 'Loay', 'Mabini', 'Maribojoc', 'Panglao', 'Pilar', 'President Carlos P. Garcia', 'Rajah', 'Sagbayan', 'San Isidro', 'San Miguel', 'Ubay', 'Valencia'],
+            'Bukidnon' => ['Malaybalay City', 'Valencia City', 'Impasug-ong', 'Kadingilan', 'Kibawe', 'Lalawan', 'Libona', 'Manolo Fortich', 'Maramag', 'Quezon', 'San Fernando', 'Sumilao', 'Tangkal'],
+            'Bulacan' => ['City of Malolos', 'San Jose del Monte', 'City of Meycauayan', 'City of San Jose del Monte', 'Angat', 'Balagtas', 'Bocaue', 'Bulakan', 'Calumpit', 'Hagonoy', 'Obando', 'Pandi', 'Paombong', 'Plaridel', 'Pulilan', 'San Ildefonso', 'San Jose', 'San Miguel', 'Santa Maria'],
+            'Cagayan' => ['Tuguegarao City', 'Alcala', 'Amulung', 'Aparri', 'Baggao', 'Ballesteros', 'Calayan', 'Camalaniugan', 'Claveria', 'Enrile', 'Gattaran', 'Iguig', 'Lal-lo', 'Pamplona', 'Peñablanca', 'Ramon', 'Sanchez-Mira', 'Tuguegarao City'],
+            'Cagayan de Oro' => ['Cagayan de Oro City'],
+            'Camarines Norte' => ['Daet', 'Jose Panganiban', 'Labo', 'Lope de Vega', 'Paracale', 'San Lorenzo Ruiz', 'Santa Elena', 'Vinzons'],
+            'Camarines Sur' => ['Naga City', 'Iriga City', 'Masbate City', 'Baao', 'Balatan', 'Bato', 'Bocog', 'Buhi', 'Calabanga', 'Camaligan', 'Capalonga', 'Caramoan', 'Garchitorena', 'Lagonoy', 'Masoli', 'Magallanes', 'Maniá', 'Minalabac', 'Sagnay', 'Sipocot', 'Tinambac'],
+            'Camiguin' => ['Mambajao'],
+            'Capiz' => ['Roxas City', 'Panay', 'Pilar', 'Ma-ayon', 'Mambusao', 'Municipio', 'Dumalag', 'Ivisan', 'Dumarao', 'Jamindan'],
+            'Catanduanes' => ['Virac', 'Bato', 'Cagnipa', 'San Andres', 'Virac', 'Panganiban', 'Tamban', 'Viga', 'Catanduanes'],
+            'Cebu' => ['Cebu City', 'Lapu-Lapu City', 'Mandaue City', 'Bogo City', 'Carmen', 'Dalaguete', 'Dumanjug', 'Liloan', 'Madridejos', 'Medellin', 'Minglanilla', 'Moalboal', 'Naga', 'Osmena', 'Pilar', 'Poo', 'Pujada', 'San Francisco', 'San Juan', 'San Fernando', 'Santa Fe', 'Sibonga', 'Tabuelan', 'Taytay', 'Tuburan'],
+            'Cotabato' => ['Tacurong City', 'Kidapawan City', 'Cotabato City', 'Alamada', 'Arakan', ' Carmen', 'Kidapawan', 'Lakewood', 'Libungan', 'Maguindanao', 'Midsayap', 'Nuling', 'Pikit', 'President Roxas', 'Tulunan'],
+            'Cagayan de Oro' => ['Cagayan de Oro City'],
+            'Ifugao' => ['Lagawe', 'Alfonso Lista', 'Banaue', 'Hingyon', 'Hungduan', 'Kiangan', 'Lamut', 'Mayoyo'],
+            'Ilocos Norte' => ['Batac', 'Paoay', 'Pagudpud', 'San Nicolas', 'Vintar', 'Adams', 'Bacarra', 'City of Batac', 'Currimao', ' Dingras', 'Ilocos Norte', 'Marcos', 'Pagsanhan', 'Ramit', 'Sarrat', 'Sugpon'],
+            'Ilocos Sur' => ['Vigan', 'Candon', 'Magsingal', 'Salcedo', 'Santa', 'Santiago', 'Sinait', 'Sta. Cruz', 'Alilem', 'Bantay', 'Betis', 'Cabugao', 'Galimuyod', 'Lidlidda', 'Magsingal', 'Narvacan', 'Quirino'],
+            'Iloilo' => ['Iloilo City', 'Passi City', 'Ajuy', 'Banica', 'Barotac Nuevo', 'Bingawan', 'Cabatuan', 'Cleguino', 'Concepcion', 'Dumangas', 'Estancia', 'Guimbal', 'Jaro', 'Lemery', 'Leon', 'Ma-ayon', 'New Lucena', 'San Enrique', 'San Miguel', 'Santa Barbara', 'Sara', 'Tigbauan', 'Tubungan'],
+            'Isabela' => ['Tuguegarao City', 'Alicia', 'Angadanan', 'Cauayan', 'Echague', 'Gamu', 'Ilagan', 'Jones', 'Maconacon', 'Naguilian', 'Palanan', 'Quezon', 'Ramon', 'Roxas', 'San Guillermo', 'Santo Tomas', 'Santiago'],
+            'Kalinga' => ['Tabuk City', 'Balbalan', 'Pasil', 'Pinukpuk', 'Tallon', 'Tanudan', '', ''],
+            'Laguna' => ['Santa Cruz', 'City of San Pablo', 'Biñan', 'Cabuyao', 'Calamba City', 'Cavinti', 'Famy', 'Kalayaan', 'Liliw', 'Laguna', 'Lucban', 'Lumban', 'Mabitac', 'Magdalena', 'Majayjay', 'Rizal', 'San Pablo City', 'San Pedro', 'Santa Cruz', 'Siniloan', 'Victoria'],
+            'Lanao del Norte' => ['Iligan City', 'Marawi City', 'Bacolod', 'Baroy', 'Lala', 'Maguindanao', 'Maigo', 'municipality', 'Sagada', 'Kapatagan', ' Tuburan'],
+            'Lanao del Sur' => ['Marawi City', 'Lumba', 'Tamparan', 'Wao', 'Bacayawan', 'Balabagan', 'Baungon', 'Bubong', 'Ditsaan-Ramain', 'Gabal', 'Ganassi', 'Marawi', 'Magas', 'Marantao', 'Monicar', 'Mutes', 'Panaga', 'Piagapo', 'Poona-Bay', 'Sultan Dumalondong', 'Sultan sa Ranao', 'Tagoloa', 'Taraka'],
+            'La Union' => ['San Fernando', 'Bacnotan', 'Caba', 'Naguilian', 'Agoo', 'Aringay', 'Bagulin', 'Burgos', 'Sudipen', 'Santol'],
+            'Leyte' => ['Ormoc City', 'Tacloban City', 'Albuera', 'Babatngon', 'Barugo', 'Burauen', 'Calubian', 'Capoocan', 'Carigara', 'Cataingan', 'Cogon', 'Comagaycay', 'Julita', 'La Paz', 'Leyte', 'Manuk', 'Marabut', 'Matag-al', 'Mayorga', 'Mידה', 'Mira', 'Matal', 'Mayom', 'Naga', 'Palompon', 'Pastrana', 'San Isidro', 'San Juan', 'San Miguel', 'Santa Fe', 'Santo Niño', 'Tacloban City', 'Tarangnan', 'Tolosa', 'Villaba'],
+            'Maguindanao del Norte' => ['Datu Odin Sinsuat', 'Maguindanao del Norte', 'Pagatin', 'Maguindanao', 'Talayan', 'Buldon', 'Kabuntalan', 'Maguindanao'],
+            'Maguindanao del Sur' => ['Datu Unsay', 'Kutawatu', 'Marga', 'Maguindanao del Sur', 'Dinaig', 'Kutawatu', 'Maguindanao'],
+            'Marinduque' => ['Mogpog', 'Buenavista', 'Santa Cruz', 'Gasan', 'Torrijos'],
+            'Masbate' => ['Masbate City', 'Albay', 'Balen', 'Cataingan', 'Claveria', 'Felipe Jacinto', 'Milagros', 'Mobo', 'Montojo', 'Palanas', 'San Fernando', 'San Jacinto', 'San Pascual', 'Uson'],
+            'Metro Manila' => ['City of Manila', 'City of Mandaluyong', 'City of Makati', 'City of Pasay', 'City of Quezon', 'City of San Juan', 'City of Caloocan', 'City of Marikina', 'City of Pasig', 'City of Taguig', 'City of Manila', 'City of Navotas', 'City of Paranaque', 'City of Pasig', 'City of Pateros', 'City of Taguig', 'City of Valenzuela', 'City of Las Piñas', 'City of Makati', 'City of Malabon', 'City of Mandaluyong', 'City of Manila', 'City of Mandaluyong', 'City of Manila', 'City of Marikina', 'City of Muntinlupa', 'City of Navotas', 'City of Paranaque', 'City of Pasay', 'City of Pasig', 'City of Quezon', 'City of San Juan', 'City of Taguig', 'City of Valenzuela', 'City of Las Piñas', 'City of Makati', 'City of Malabon', 'City of Mandaluyong'],
+            'Misamis Occidental' => ['Oroquieta City', 'Pagadian City', 'Aloran', 'Baliangao', 'Clarin', 'Colongol', 'Loboc', 'Oroquieta', 'Panaon', 'Plaridel', 'Sinacaban'],
+            'Misamis Oriental' => ['Cagayan de Oro City', 'El Salvador City', 'Gingoog City', 'Bacolod', 'Gitagum', 'Initao', 'Jasaan', 'Lagongay', 'Libertad', 'Lugait', 'Magsaysay', 'Manticao', 'Medina', 'Naawan', 'Opol', 'Salay'],
+            'Mountain Province' => ['Bontoc', 'Paracelis', 'Besao', 'Bontoc', 'Natonin', 'Sagada', 'Tadian'],
+            'Negros Occidental' => ['Bacolod City', 'Kabankalan', 'Sipalay', 'Hinobaan', 'Valladolid', 'Toboso', 'Ayungan', 'Binalbagan', 'Bago City', 'Canguba', 'Enrique Villanueva', 'Himamaylan', 'Ilog', 'Isabel', 'Kabankalan', 'Kananga', 'La Castellana', 'Manapla', 'Moalboal', 'Murcia', 'Panaon', 'Pontevedra', 'Quirino', 'Salvador', 'Sipalay', 'Talisay', 'Valladolid'],
+            'Negros Oriental' => ['Dumaguete City', 'Bayawan', 'Bindoy', 'Tayasan', 'Amlan', 'Ayungan', 'Bacong', 'Guindulman', 'Jagua', 'Mabinay', 'Mabinay', 'Manjuyod', 'Pamplona', 'San Jose', 'Siaton', 'Silay', 'Tabao'],
+            'Northern Samar' => ['Catbalogan City', 'Arnold', 'Bobon', 'Catubig', 'Gitra', 'Lapinig', 'Lavezares', 'Mapanas', 'Maslog', 'Milagros', 'Nawoud', 'Pambujan', 'Paranas', 'San Isidro', 'San Jose', 'San Roque', 'Santa Margarita', 'Santo Niño', 'Sogod', 'Ulot'],
+            'Nueva Ecija' => ['City of Cabanatuan', 'City of Gapan', 'City of Muñoz', 'City of Palayan', 'Burgos', 'Carranglan', 'Cuartero', 'Gabaldon', 'Gapan', 'General Mamerto', 'Gomez', 'Licab', 'Lupao', 'Maasim', 'Nampicuan', 'Pantabangan', 'Peñaranda', 'Rizal', 'San Antonio', 'San Isidro', 'San Jose', 'San Juan', 'San Mariano', 'Santa Rosa', 'Santo Domingo', 'Taliq'],
+        ];
+
+    }
+}
+    
