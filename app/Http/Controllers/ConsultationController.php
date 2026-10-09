@@ -172,7 +172,7 @@ class ConsultationController extends Controller
 
         return view('staff.consultations', [
             'shell' => ShellContext::fromUser($request->user(), activePath: 'staff/consultations'),
-            'title' => 'Consultations',
+            'title' => 'Medical Consultations',
             'errors' => $errors,
             'edit' => $edit,
             'patients' => $patients,

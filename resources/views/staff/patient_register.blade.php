@@ -76,7 +76,7 @@
                         </select>
                     </div>
                     <div class="col-md-5"><label class="form-label">Province *</label>
-                        <select name="province" class="form-select" required>
+                        <select name="province" class="form-select" required onchange="updateCities()">
                             <option value="">-- Select Province --</option>
                             @foreach (\App\Support\PhilippineLocations::provinces() as $province)
                                 <option value="{{ $province }}" {{ ($old['province'] ?? '') === $province ? 'selected' : '' }}>{{ $province }}</option>
@@ -119,6 +119,38 @@
     </div>
 </div>
 <script>
+var patientLocationData = <?php
+$provincesWithCities = [];
+foreach (\App\Support\PhilippineLocations::provinces() as $province) {
+    $cities = \App\Support\PhilippineLocations::cities($province);
+    if ($cities) {
+        $provincesWithCities[$province] = $cities;
+    }
+}
+echo json_encode($provincesWithCities, JSON_UNESCAPED_UNICODE);
+?>;
+
+// Populate the City/Municipality dropdown for the selected province (a
+// fresh GET renders it empty - same gap the register form's cascade
+// fixes). The Barangay field stays a free-text input here.
+function updateCities() {
+    var provinceSelect = document.querySelector('select[name="province"]');
+    var citySelect = document.querySelector('select[name="city_municipality"]');
+    var currentCity = citySelect.value;
+    var cities = patientLocationData[provinceSelect.value] || [];
+
+    citySelect.innerHTML = '<option value="">-- Select City/Municipality --</option>';
+    cities.forEach(function(city) {
+        var option = document.createElement('option');
+        option.value = city;
+        option.text = city;
+        if (city === currentCity) {
+            option.selected = true;
+        }
+        citySelect.appendChild(option);
+    });
+}
+
 function toggleAccountType() {
     var sel = document.getElementById('account_type');
     var sF = document.getElementById('studentFields');

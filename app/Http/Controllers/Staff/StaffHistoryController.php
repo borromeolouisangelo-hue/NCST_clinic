@@ -110,7 +110,7 @@ class StaffHistoryController extends Controller
 
         return view('staff.history', [
             'shell' => ShellContext::fromUser($request->user(), activePath: 'staff/history'),
-            'title' => 'History',
+            'title' => 'Transaction History',
             'tabs' => $tabs,
             'activeTab' => $activeTab,
             'meta' => $meta,

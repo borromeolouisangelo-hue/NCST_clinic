@@ -542,6 +542,73 @@ class StaffDashboardTest extends TestCase
     }
 
     // ---------------------------------------------------------------------
+    // Feature 10: dashboard calendar card -> full Staff Calendar page
+    // ---------------------------------------------------------------------
+
+    public function test_dashboard_calendar_header_view_all_opens_the_full_calendar(): void
+    {
+        $staff = $this->makeStaff();
+        $patient = $this->makePatient(1);
+        $this->makeSickLeave($patient->id, 'Fever', 'pending');
+
+        $response = $this->actingAs($staff)->get('/staff/dashboard');
+
+        $response->assertOk();
+        $response->assertSee('Clinic Calendar');
+        // The header button links to the full staff calendar through the
+        // named route helper - one calendar, one extra link, nothing else.
+        $response->assertSee('href="'.route('staff.calendar').'" class="btn btn-sm btn-outline-primary">View All', false);
+        // The existing event source supplies the card's payload (a pending
+        // sick leave is one of the original event types).
+        $response->assertSee('Sick Leave: Patient 01 (patient01)');
+        // One element on the page - still exactly one FullCalendar instance.
+        $this->assertSame(1, substr_count($response->getContent(), 'id="dashboardCalendar"'));
+        // The sidebar carries the Calendar link for staff, but it is only
+        // marked active on the calendar page itself.
+        $response->assertSee(url('staff/calendar'));
+        $response->assertDontSee(url('staff/calendar').'" class="nav-link active', false);
+    }
+
+    // ---------------------------------------------------------------------
+    // Feature 11: recent-record cards -> dedicated history pages
+    // ---------------------------------------------------------------------
+
+    public function test_seven_recent_cards_each_link_to_their_dedicated_page_above_the_card(): void
+    {
+        $staff = $this->makeStaff();
+
+        $response = $this->actingAs($staff)->get('/staff/dashboard');
+        $response->assertOk();
+
+        // section title => the existing dedicated page the View All button
+        // must open (route names straight from routes/web.php, no new ones).
+        $destinations = [
+            'Recent Patients' => route('staff.patients'),
+            'Recent Consultations' => route('staff.consultations'),
+            'Recent Certificates' => route('staff.certificates'),
+            'Recent Sick Leaves' => route('staff.sick_leaves'),
+            'Recent Dispense' => route('staff.dispense'),
+            'Recent Inventory' => route('staff.inventory'),
+            'Recent Equipment Loans' => route('staff.equipment_loans'),
+        ];
+
+        $content = $response->getContent();
+        foreach ($destinations as $title => $url) {
+            $response->assertSee($title);
+
+            // The button sits outside and above the card: mb-2 spacing (the
+            // in-header pattern has no margin class) and it renders before
+            // the card title it belongs to.
+            $buttonAt = strpos($content, 'href="'.$url.'" class="btn btn-sm btn-outline-primary mb-2">');
+            $titleAt = strpos($content, $title);
+
+            $this->assertNotFalse($buttonAt, $title.' card has no above-the-card View All button.');
+            $this->assertNotFalse($titleAt, $title.' card is missing.');
+            $this->assertLessThan($titleAt, $buttonAt, 'View All must sit above the card, not inside it.');
+        }
+    }
+
+    // ---------------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------------
 

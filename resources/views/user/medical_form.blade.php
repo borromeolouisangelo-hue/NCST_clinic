@@ -35,7 +35,7 @@
 </div>
 
 <div class="row g-3">
-    <div class="col-lg-8">
+    <div class="container-fluid">
         <div class="card">
             <div class="card-header">Health Information</div>
             <div class="card-body">
@@ -68,38 +68,7 @@
                         <div class="col-md-3"><label class="form-label">Height (cm)</label><input type="number" step="0.01" name="height_cm" class="form-control" value="{{ $rec['height_cm'] ?? '' }}"></div>
                         <div class="col-md-3"><label class="form-label">Weight (kg)</label><input type="number" step="0.01" name="weight_kg" class="form-control" value="{{ $rec['weight_kg'] ?? '' }}"></div>
                         <div class="col-12">
-                            <label class="form-label">Allergies (free text)</label>
-                            <textarea name="allergies_text" class="form-control" rows="2" placeholder="e.g. penicillin, peanuts, dust">{{ $rec['allergies_text'] ?? '' }}</textarea>
-                        </div>
-                        <div class="col-12">
-                            <label class="form-label">Existing Conditions</label>
-                            <textarea name="existing_conditions" class="form-control" rows="2">{{ $rec['existing_conditions'] ?? '' }}</textarea>
-                        </div>
-                        <div class="col-12">
-                            <label class="form-label">Current Medications</label>
-                            <textarea name="current_medications" class="form-control" rows="2">{{ $rec['current_medications'] ?? '' }}</textarea>
-                        </div>
-                        <div class="col-12">
-                            <label class="form-label">Immunizations</label>
-                            <textarea name="immunizations" class="form-control" rows="2">{{ $rec['immunizations'] ?? '' }}</textarea>
-                        </div>
-                        <div class="col-12">
-                            <label class="form-label">Current Symptoms (if any)</label>
-                            <textarea name="current_symptoms" class="form-control" rows="2">{{ $rec['current_symptoms'] ?? '' }}</textarea>
-                        </div>
-                    </div>
-                    <div class="d-flex gap-2 mt-3">
-                        <button class="btn btn-primary"><i class="bi bi-save me-1"></i> Save Medical Form</button>
-                        <button type="button" class="btn btn-accent" data-bs-toggle="modal" data-bs-target="#allergyModal"><i class="bi bi-plus-lg me-1"></i> Add Allergy</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <div class="col-lg-4">
-        <div class="card">
-            <div class="card-header"><i class="bi bi-exclamation-triangle text-accent me-1"></i> Allergy Registry</div>
+                            <div class="card-header"><i class="bi bi-exclamation-triangle text-accent me-1"></i> Allergy Registry</div>
             <div class="card-body">
                 @if (!$allergies)
                     <p class="text-muted small">No allergies recorded.</p>
@@ -122,10 +91,38 @@
                     </ul>
                 @endif
             </div>
+       
+        <div class="d-flex gap-2 mt-3">
+                        <button type="button" class="btn btn-accent" data-bs-toggle="modal" data-bs-target="#allergyModal"><i class="bi bi-plus-lg me-1"></i> Add Allergy</button>
+        </div>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Existing Conditions</label>
+                            <textarea name="existing_conditions" class="form-control" rows="2">{{ $rec['existing_conditions'] ?? '' }}</textarea>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Current Medications</label>
+                            <textarea name="current_medications" class="form-control" rows="2">{{ $rec['current_medications'] ?? '' }}</textarea>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Immunizations</label>
+                            <textarea name="immunizations" class="form-control" rows="2">{{ $rec['immunizations'] ?? '' }}</textarea>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Current Symptoms (if any)</label>
+                            <textarea name="current_symptoms" class="form-control" rows="2">{{ $rec['current_symptoms'] ?? '' }}</textarea>
+                        </div>
+                    </div>
+                    <div class="d-flex gap-2 mt-3">
+                        <button class="btn btn-primary"><i class="bi bi-save me-1"></i> Save Medical Form</button>
+                        
+                    </div>
+                </form>
+            </div>
         </div>
     </div>
-</div>
 
+    
 <!-- Add Allergy Modal -->
 <div class="modal fade" id="allergyModal" tabindex="-1" aria-labelledby="allergyModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered modal-md">

@@ -205,7 +205,10 @@ class PatientTest extends TestCase
         $response->assertSee('Maria Santos');
         $response->assertSee('2024-0001');
         $response->assertSee('EMP-01');
-        $response->assertSee('New Patient');
+        // The separate registration page is unlinked: no New Patient button
+        // in the toolbar and no Register Patient entry in the sidebar.
+        $response->assertDontSee('New Patient');
+        $response->assertDontSee('Register Patient');
         $response->assertSee('patientSearchSuggestions');  // datalist present
         // Datalist suggestion label format: "Name - ID - @username"
         $response->assertSee('Juan Dela Cruz - 2024-0001 - @juan');
@@ -302,8 +305,10 @@ class PatientTest extends TestCase
 
         $response->assertOk();
         $response->assertSee('Back to patients');
-        $response->assertSee('Overview');
-        $response->assertSee('Visits and dispensing');
+        // The Overview / Visits and dispensing pills were removed together
+        // with the activity sections they switched between.
+        $response->assertDontSee('Overview');
+        $response->assertDontSee('Visits and dispensing');
 
         // Patient information card
         $response->assertSee('Patient Information');
@@ -330,17 +335,18 @@ class PatientTest extends TestCase
         $response->assertSee('Severe');
         $response->assertSee('Hives');
 
-        // Consultations card (staff name from profiles JOIN, date formatted)
-        $response->assertSee('Recent Consultations');
-        $response->assertSee('Common cold');
-        $response->assertSee('Clinic Staff');
-        $response->assertSee('Sep 20, 2026');
-        $response->assertSee('…'); // mb_strimwidth 30-char truncation of the complaint
-
-        // Dispensing card
-        $response->assertSee('Recent Dispensed Medicines');
-        $response->assertSee('Paracetamol 500mg');
-        $response->assertSee('>6<', false); // quantity, right-aligned cell
+        // Recent Consultations / Recent Dispensed Medicines were removed from
+        // the overview even though the records above exist - the history stays
+        // on /staff/consultations and /staff/dispense. ('Clinic Staff' is not
+        // asserted absent: the topbar account dropdown always renders the
+        // logged-in staff's own name.)
+        $response->assertDontSee('Recent Consultations');
+        $response->assertDontSee('Common cold');
+        $response->assertDontSee('Sep 20, 2026');
+        $response->assertDontSee('…'); // mb_strimwidth truncation lived on the complaint cell
+        $response->assertDontSee('Recent Dispensed Medicines');
+        $response->assertDontSee('Paracetamol 500mg');
+        $response->assertDontSee('>6<', false); // quantity cell, right-aligned
     }
 
     public function test_employee_profile_shows_employee_details_instead_of_student(): void
@@ -362,8 +368,8 @@ class PatientTest extends TestCase
         $response->assertDontSee('Student No.');
         $response->assertSee('No medical record submitted yet.');
         $response->assertSee('No linked allergies recorded.');
-        $response->assertSee('No consultations.');
-        $response->assertSee('No dispensing records.');
+        $response->assertDontSee('No consultations.');
+        $response->assertDontSee('No dispensing records.');
     }
 
     public function test_unknown_profile_id_falls_back_to_the_list(): void

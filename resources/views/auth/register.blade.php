@@ -1,5 +1,5 @@
 {{--
-    Self-registration - exact port of auth/register.php (markup lines 92-301):
+    Self-registration - port of auth/register.php (markup lines 92-301):
     the standalone auth document (this page does NOT use the dashboard
     layout - the original prints its own DOCTYPE/head/body, like login), the
     auth-brand header, the .auth-alerts slot fed by the plain $errors array,
@@ -7,9 +7,25 @@
     personal / emergency sections, both detail blocks, the Register and
     Back to Login buttons and the inline toggle/age script.
 
-    Preserved verbatim: required attributes on the six validated inputs
-    ONLY (student_no / employee_no show a * label but carry NO required
-    attr - native validation therefore never blocks them), the readonly Age
+    Location Information (feature work): a Region -> Province ->
+    City/Municipality -> Barangay cascade. Server side the selects re-render
+    scoped from $old (province options by posted region, cities by posted
+    province, the posted barangay as a lone selected option); client side
+    the inline regionData/locationData maps re-run the chain on every
+    change, and the barangay list lazy-loads once from
+    public/data/barangays.json (keyed "Province|City" - no new routes,
+    degrades to a plain text input if the data is unavailable). House No.,
+    Block and Lot are separate inputs that the controller folds into the
+    legacy lot_block composite, so format_address() keeps its exact
+    6-part composition; no postal-code input (the legacy key stays
+    key-only).
+
+    Preserved verbatim: required attributes on the six field-checked inputs
+    (username / email / password / password_confirm / first_name /
+    last_name) plus the four location dropdowns (Region / Province /
+    City/Municipality / Barangay - client-side only, no new server check);
+    student_no / employee_no show a * label but carry NO required attr -
+    native validation therefore never blocks them, the readonly Age
     field, the employee block's display:none default, the $old[...]
     repopulation everywhere (default 'student' account type selected), the
     raw type keys, and the stylesheet WITHOUT a cache-busting ?v= (the
@@ -25,6 +41,10 @@
       - Back to Login uses route('login'): the original links
         auth/login.php, whose path normalizes to the port's canonical
         /login exactly like the harness maps the navigation path.
+      - the error popups (Swal.fire) load sweetalert2 only when $errors
+        is non-empty: the reference shows plain alerts inline, and the
+        dashboard layout's CDN include does not apply to this standalone
+        document.
     The success flash is rendered by the login page after the PRG redirect
     (original lines 83-84); this page never renders a flash of its own.
 --}}
@@ -54,6 +74,7 @@
                         <div class="alert alert-danger py-2 mb-2 d-none" data-alert="{{ $err }}"></div>
                     @endforeach
                 </div>
+                <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
                 <script>
                     document.addEventListener('DOMContentLoaded', function() {
                         @foreach ($errors as $err)
@@ -101,53 +122,123 @@
                     </div>
                 </div>
 
-                <div class="section-title">Location Information</div>
+                <div class="section-title">Personal Information</div>
                 <div class="row g-3 mb-3">
-                    <div class="col-md-4">
+                    <div class="col-md-3">
+                        <label class="form-label">First Name *</label>
+                        <input type="text" name="first_name" class="form-control" value="{{ $old['first_name'] }}" required>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Middle Name</label>
+                        <input type="text" name="middle_name" class="form-control" value="{{ $old['middle_name'] }}">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Last Name *</label>
+                        <input type="text" name="last_name" class="form-control" value="{{ $old['last_name'] }}" required>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Gender</label>
+                        <select name="gender" class="form-select">
+                            <option value="">--</option>
+                            @foreach (['male', 'female', 'other'] as $g)
+                                <option value="{{ $g }}" {{ $old['gender'] === $g ? 'selected' : '' }}>{{ ucfirst($g) }}</option>
+                            @endforeach
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Birthdate</label>
+                        <input type="date" name="birthdate" id="birthdate" class="form-control" value="{{ $old['birthdate'] }}">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Age</label>
+                        <input type="text" id="ageField" class="form-control" readonly>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Contact No.</label>
+                        <input type="text" name="contact_no" class="form-control" value="{{ $old['contact_no'] }}">
+                    </div>
+                </div>
+
+                <div class="section-title">Location Information</div>
+                @php
+                    $scopedProvinces = $old['region'] !== ''
+                        ? \App\Support\PhilippineLocations::provinces($old['region'])
+                        : \App\Support\PhilippineLocations::provinces();
+                    if ($scopedProvinces === []) {
+                        $scopedProvinces = \App\Support\PhilippineLocations::provinces();
+                    }
+                @endphp
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6">
                         <div class="position-relative mb-2">
                             <label class="form-label" for="region_search">Region *</label>
                             <input type="text" id="region_search" class="form-control form-control-sm d-none" placeholder="Search region..." aria-label="Search region">
                             <select name="region" id="region" class="form-select" required>
                                 <option value="">-- Select Region --</option>
                                 @foreach (\App\Support\PhilippineLocations::regionsWithProvinces() as $regionName => $regionProvinces)
-                                    <option value="{{ $regionName }}" {{ ($old['region'] ?? '') === $regionName ? 'selected' : '' }}>{{ $regionName }}</option>
+                                    <option value="{{ $regionName }}" {{ $old['region'] === $regionName ? 'selected' : '' }}>{{ $regionName }}</option>
                                 @endforeach
                             </select>
                         </div>
                     </div>
-                    <div class="col-md-4">
+                    <div class="col-md-6">
                         <div class="position-relative mb-2">
                             <label class="form-label" for="province_search">Province *</label>
                             <input type="text" id="province_search" class="form-control form-control-sm d-none" placeholder="Search province..." aria-label="Search province">
                             <select name="province" id="province" class="form-select" required>
                                 <option value="">-- Select Province --</option>
-                                @if (old('region'))
-                                    @foreach (\App\Support\PhilippineLocations::provinces(old('region')) as $province)
-                                        <option value="{{ $province }}" {{ ($old['province'] ?? '') === $province ? 'selected' : '' }}>{{ $province }}</option>
-                                    @endforeach
-                                @else
-                                    @foreach (\App\Support\PhilippineLocations::provinces() as $province)
-                                        <option value="{{ $province }}" {{ ($old['province'] ?? '') === $province ? 'selected' : '' }}>{{ $province }}</option>
-                                    @endforeach
-                                @endif
+                                @foreach ($scopedProvinces as $province)
+                                    <option value="{{ $province }}" {{ $old['province'] === $province ? 'selected' : '' }}>{{ $province }}</option>
+                                @endforeach
                             </select>
                         </div>
                     </div>
-                    <div class="col-md-4">
+                    <div class="col-md-6">
                         <div class="position-relative mb-2">
                             <label class="form-label" for="city_search">City/Municipality *</label>
                             <input type="text" id="city_search" class="form-control form-control-sm d-none" placeholder="Search city/municipality..." aria-label="Search city/municipality">
                             <select name="city_municipality" id="city_municipality" class="form-select" required>
                                 <option value="">-- Select City/Municipality --</option>
-                                @if (old('province'))
-                                    @foreach (\App\Support\PhilippineLocations::cities(old('province')) as $city)
-                                        <option value="{{ $city }}" {{ ($old['city_municipality'] ?? '') === $city ? 'selected' : '' }}>{{ $city }}</option>
+                                @if ($old['province'] !== '')
+                                    @foreach (\App\Support\PhilippineLocations::cities($old['province']) as $city)
+                                        <option value="{{ $city }}" {{ $old['city_municipality'] === $city ? 'selected' : '' }}>{{ $city }}</option>
                                     @endforeach
                                 @else
                                     <option value="" disabled>Select a province first</option>
                                 @endif
                             </select>
                         </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="position-relative mb-2">
+                            <label class="form-label" for="barangay_search">Barangay *</label>
+                            <input type="text" id="barangay_search" class="form-control form-control-sm d-none" placeholder="Search barangay..." aria-label="Search barangay">
+                            <select name="barangay" id="barangay" class="form-select" required>
+                                @if ($old['barangay'] !== '')
+                                    <option value="{{ $old['barangay'] }}" selected>{{ $old['barangay'] }}</option>
+                                @elseif ($old['city_municipality'] === '')
+                                    <option value="" disabled>Select a city first</option>
+                                @else
+                                    <option value="">-- Select Barangay --</option>
+                                @endif
+                            </select>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">House No.</label>
+                        <input type="text" name="house_no" id="house_no" class="form-control" value="{{ $old['house_no'] }}">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Block</label>
+                        <input type="text" name="block" id="block" class="form-control" value="{{ $old['block'] }}">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Lot</label>
+                        <input type="text" name="lot" id="lot" class="form-control" value="{{ $old['lot'] }}">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Street / Subdivision / Village</label>
+                        <input type="text" name="street" id="street" class="form-control" value="{{ $old['street'] }}">
                     </div>
                 </div>
 
@@ -237,10 +328,10 @@
     }
     birthdate.addEventListener('change', updateAge);
     updateAge();
-})
+})();
 
 // <searchable-dropdowns-start>
-var locationData = <?php 
+var locationData = <?php
 $provincesWithCities = [];
 foreach (\App\Support\PhilippineLocations::provinces() as $province) {
     $cities = \App\Support\PhilippineLocations::cities($province);
@@ -250,9 +341,14 @@ foreach (\App\Support\PhilippineLocations::provinces() as $province) {
 }
 echo json_encode($provincesWithCities, JSON_UNESCAPED_UNICODE);
 ?>;
+var regionData = <?php echo json_encode(\App\Support\PhilippineLocations::regionsWithProvinces(), JSON_UNESCAPED_UNICODE); ?>;
+var allProvinces = <?php echo json_encode(array_values(\App\Support\PhilippineLocations::allProvinces()), JSON_UNESCAPED_UNICODE); ?>;
+var barangayUrl = "{{ asset('data/barangays.json') }}";
 
 // Initialize searchable dropdowns
 document.addEventListener('DOMContentLoaded', function() {
+    var regionSelect = document.getElementById('region');
+
     // Province search functionality
     var provinceInput = document.getElementById('province_search');
     var provinceSelect = document.getElementById('province');
@@ -262,6 +358,9 @@ document.addEventListener('DOMContentLoaded', function() {
     var cityInput = document.getElementById('city_search');
     var citySelect = document.getElementById('city_municipality');
     var cityOptions = citySelect.options;
+
+    var barangayInput = document.getElementById('barangay_search');
+    var barangaySelect = document.getElementById('barangay');
 
     // Show/hide search inputs on focus
     provinceInput.addEventListener('focus', function() {
@@ -337,22 +436,35 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // When province changes, update city dropdown
-    provinceSelect.addEventListener('change', function() {
-        var selectedProvince = this.value;
-        // Hide search inputs
-        provinceInput.value = '';
-        cityInput.value = '';
-        provinceSelect.classList.remove('with-search', 'is-focused');
-        citySelect.classList.remove('with-search', 'is-focused');
+    // ---- Region -> Province -> City -> Barangay cascade ----
 
-        // Update city options based on selected province
-        var provinceCities = locationData[selectedProvince] || [];
+    // Rebuild the province list from the selected region (or every
+    // province when no region is chosen), keeping the current selection
+    // when it still belongs to the list.
+    function rebuildProvinces() {
+        var region = regionSelect.value;
+        var regionProvinces = region ? (regionData[region] || []) : allProvinces;
+        var currentProvince = provinceSelect.value;
+
+        provinceSelect.innerHTML = '<option value="">-- Select Province --</option>';
+        regionProvinces.forEach(function(province) {
+            var option = document.createElement('option');
+            option.value = province;
+            option.text = province;
+            if (province === currentProvince) {
+                option.selected = true;
+            }
+            provinceSelect.appendChild(option);
+        });
+    }
+
+    // Rebuild the city/municipality list from the selected province,
+    // keeping the current selection when the name still exists there.
+    function rebuildCities() {
+        var provinceCities = locationData[provinceSelect.value] || [];
         var currentCity = citySelect.value;
 
-        // Clear and update city options
         citySelect.innerHTML = '<option value="">-- Select City/Municipality --</option>';
-
         provinceCities.forEach(function(city) {
             var option = document.createElement('option');
             option.value = city;
@@ -362,39 +474,112 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             citySelect.appendChild(option);
         });
+    }
+
+    // Barangay names ship as public/data/barangays.json (keyed
+    // "Province|City") and are fetched once, on first use.
+    var barangayPromise = null;
+    var barangayToken = 0;
+    var barangayDegraded = false;
+
+    function ensureBarangays() {
+        if (!barangayPromise) {
+            barangayPromise = fetch(barangayUrl)
+                .then(function(response) {
+                    if (!response.ok) throw new Error('HTTP ' + response.status);
+                    return response.json();
+                })
+                .catch(function(error) {
+                    console.error('Barangay data failed to load:', error);
+                    return null;
+                });
+        }
+        return barangayPromise;
+    }
+
+    // Data missing or the key absent: fall back to a plain text input so
+    // registration is never blocked by an empty dropdown.
+    function degradeBarangayToText() {
+        if (barangayDegraded) return;
+        barangayDegraded = true;
+        var input = document.createElement('input');
+        input.type = 'text';
+        input.name = 'barangay';
+        input.id = 'barangay';
+        input.className = 'form-control';
+        input.value = barangaySelect.value;
+        input.placeholder = 'Barangay';
+        barangaySelect.parentNode.replaceChild(input, barangaySelect);
+        barangaySelect = input;
+    }
+
+    // Rebuild the barangay list for the current province + city. The
+    // token keeps only the latest request live (rapid region/province/
+    // city changes resolve the shared fetch out of order otherwise).
+    function rebuildBarangays(keepCurrent) {
+        if (barangayDegraded) return;
+        var token = ++barangayToken;
+        var current = keepCurrent ? barangaySelect.value : '';
+        var key = provinceSelect.value + '|' + citySelect.value;
+
+        barangaySelect.innerHTML = '<option value="">-- Select Barangay --</option>';
+        if (!provinceSelect.value || !citySelect.value) return;
+
+        ensureBarangays().then(function(data) {
+            if (barangayDegraded || token !== barangayToken) return;
+            var barangays = data ? data[key] : null;
+            if (!barangays || !barangays.length) {
+                degradeBarangayToText();
+                return;
+            }
+            barangays.forEach(function(barangay) {
+                var option = document.createElement('option');
+                option.value = barangay;
+                option.text = barangay;
+                if (barangay === current) {
+                    option.selected = true;
+                }
+                barangaySelect.appendChild(option);
+            });
+        });
+    }
+
+    // Shared province-change body: clear the search overlays, refresh the
+    // city list, then cascade down to the barangay list.
+    function handleProvinceChange() {
+        provinceInput.value = '';
+        cityInput.value = '';
+        provinceSelect.classList.remove('with-search', 'is-focused');
+        citySelect.classList.remove('with-search', 'is-focused');
+
+        rebuildCities();
+        rebuildBarangays(false);
 
         // Show the city dropdown and focus the search input
         citySelect.classList.add('with-search');
         cityInput.focus();
+    }
+
+    // Region change: rebuild the province list, then re-run the whole
+    // province -> city -> barangay chain.
+    regionSelect.addEventListener('change', function() {
+        rebuildProvinces();
+        handleProvinceChange();
     });
 
-    // Restore old province on page load (from $old data)
-    {% if old('province') %}
-    var oldProvince = "<?php echo htmlspecialchars(old('province')); ?>";
-    provinceSelect.value = oldProvince;
-    {% if old('city_municipality') %}
-    var oldCity = "<?php echo htmlspecialchars(old('city_municipality')); ?>";
-    {% endif %}
-    {% endif %}
+    provinceSelect.addEventListener('change', handleProvinceChange);
 
-    // Initialize city dropdown based on restored province
-    {% if old('province') && old('city_municipality') %}
-    setTimeout(function() {
-        var oldProvince = "<?php echo htmlspecialchars(old('province')); ?>";
-        var oldCity = "<?php echo htmlspecialchars(old('city_municipality')); ?>";
-        // Find and select the old city in the updated province
-        var provOption = provinceSelect.options[provinceSelect.selectedIndex];
-        if (provOption.value) {
-            var cities = locationData[oldProvince] || [];
-            var citySelect = document.getElementById('city_municipality');
-            for (var i = 0; i < citySelect.options.length; i++) {
-                if (citySelect.options[i].value === oldCity) {
-                    citySelect.selectedIndex = i;
-                    break;
-                }
-            }
-        }
-    }, 100);
-    {% endif %}
+    citySelect.addEventListener('change', function() {
+        rebuildBarangays(false);
+    });
+
+    // Re-select a pre-filled barangay once its list arrives (error
+    // re-render); no city means the server placeholder stays as-is.
+    if (citySelect.value) {
+        rebuildBarangays(true);
+    }
 });
 // <searchable-dropdowns-end>
+</script>
+</body>
+</html>

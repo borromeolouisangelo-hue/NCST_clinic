@@ -14,8 +14,11 @@
     (Phase 6); the success flashes are written but never rendered
     (write-only legacy slot - see partials/flash.blade.php).
 
-    Legacy quirks kept: ?q= and ?stock= are echoed into the toolbar but
-    NEVER filter anything (dead inputs); ?item_type= filters and (as a
+    Legacy quirks kept: ?q= and ?stock= are echoed into the toolbar - both
+    dead in the reference, wired up now (?q= LIKE-matches the item and
+    category names, ?stock= keeps one in/low/out bucket over the total,
+    unknown stock values fall back to no filtering); ?item_type= filters
+    and (as a
     post-migration addition) now also has a visible toolbar field alongside
     the new ?category= filter over the existing medicine_categories tree
     (invalid values still fall back to 'all' / no category); the empty-state
@@ -25,11 +28,16 @@
     controller already computed; a delete with a missing batch id renders
     the error inside the modal with the auto-open script enabled.
 
-    Post-migration feature: the "Total Pieces" cell now renders the derived
-    piece state - 11/12 for tablets (12 per package), 49/50 for boxes (50 per
-    box) - and, for the non-piece units (bottle, tube, roll, piece, ...), the
-    Full / Half Empty / Empty level buttons that post action=set_level back
-    to this page. See App\Services\StockUnits.
+    Post-migration feature: the "Total Pieces" cell renders the tracking
+    state from App\Services\StockUnits - the package position for
+    quantitative Individual items ("11/12 deducted" for tablets, "20/50
+    deducted" for boxes; units without a package size, e.g. pieces, keep
+    the plain stock count) and the opened ratio for non-quantitative
+    Container + Partial / Roll + Partial items ("0/16 opened",
+    "1/4 opened" - opened/total; the verbose "8 unopened bottles · 1
+    opened bottle" line is the dispensing modal's Stock label). The old
+    Full / Half Empty / Empty level buttons were removed with the
+    fill-level system.
 --}}
 @extends('layouts.dashboard')
 
@@ -82,13 +90,12 @@
                     <div class="col d-flex flex-wrap gap-2 justify-content-start">
                         
                         <button class="btn btn-sm btn-primary text-nowrap"><i class="bi bi-search me-1"></i> Search</button>
-                        <a href="{{ route('staff.inventory') }}" class="btn btn-sm btn-outline-secondary text-nowrap">Reset</a>
+                        
                         <button type="button" class="btn btn-sm btn-accent text-nowrap" data-bs-toggle="modal" data-bs-target="#stockInModal"><i class="bi bi-plus-lg me-1"></i> Add Stock</button>
                     </div>
                 </form>
             </div>
         </div>
-        @if (!empty($levelError))<div class="alert alert-danger py-2 mb-3">{{ $levelError }}</div>@endif
         <div class="card"><div class="table-responsive"><table id="inventoryTable" class="table table-hover mb-0 align-middle"><thead><tr><th>#</th><th>Item</th><th>Type</th><th class="text-end">Total Stock</th><th>Unit</th><th class="text-end">Total Pieces</th><th>Threshold</th><th>Status</th><th>Next Expiry</th><th>Last Received</th></tr></thead>
         @if (!$filteredInventory)
             <tr><td colspan="9" class="text-center text-muted py-4">No products found.</td></tr>
@@ -115,7 +122,12 @@
                 }
             @endphp
             @php
-            $totalPieces = $qty; // Default 1 piece per unit since pieces_per_unit column removed
+            // Tracking state (App\Services\StockUnits): the package position
+            // for quantitative Individual items ("11/12 deducted"), the plain
+            // count for units without a package size, and the opened ratio
+            // for Container + Partial / Roll + Partial items ("0/16
+            // opened").
+            $totalPieces = $qty; // fallback when the tracking state is unavailable
             $stockState = $stockStates[$row->id] ?? null;
             @endphp
             <tr>
@@ -125,20 +137,8 @@
                 <td class="text-end"><strong>{{ $qty }}</strong></td>
                 <td>{{ $row->unit ?: 'pcs' }}</td>
                 <td class="text-end">
-                    @if ($stockState && $stockState['tracked'])
-                        <span class="badge {{ $stockState['badge'] }}" title="Pieces left in the open package - {{ $stockState['size'] }} per {{ $row->unit }}">{{ $stockState['text'] }}</span>
-                    @elseif ($stockState)
-                        <form method="post" class="d-inline">
-                            @csrf
-
-                            <input type="hidden" name="action" value="set_level">
-                            <input type="hidden" name="medicine_id" value="{{ (int) $row->id }}">
-                            <div class="btn-group btn-group-sm" role="group" aria-label="Stock level for {{ $row->medicine_name }}">
-                                <button type="submit" name="level" value="full" class="btn {{ $stockState['level'] === 'full' ? 'btn-success' : 'btn-outline-success' }}" title="Full">Full</button>
-                                <button type="submit" name="level" value="half" class="btn {{ $stockState['level'] === 'half' ? 'bg-orange text-white' : 'btn-outline-warning' }}" title="Half Empty">Half</button>
-                                <button type="submit" name="level" value="empty" class="btn {{ $stockState['level'] === 'empty' ? 'btn-danger' : 'btn-outline-danger' }}" title="Empty">Empty</button>
-                            </div>
-                        </form>
+                    @if ($stockState)
+                        <span class="badge {{ $stockState['badge'] }}" @if ($stockState['method'] !== 'individual') title="{{ $stockState['method'] === 'roll' ? 'Roll' : 'Container' }} + Partial - opened units stay in Total Stock until marked depleted" @endif>{{ $stockState['text'] }}</span>
                     @else
                         {{ $totalPieces }}
                     @endif

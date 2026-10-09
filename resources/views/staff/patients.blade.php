@@ -3,6 +3,87 @@
 @section('title', 'Patients')
 
 @section('content')
+@if ($patient)
+    {{-- Profile branch - port of staff/patients.php lines 100-218: the Back
+         link and the overview cards. The original's Recent Consultations and
+         Recent Dispensed Medicines cards, plus the Overview / Visits and
+         dispensing pill nav that switched between them, were removed here as
+         a display cleanup - those records stay on /staff/consultations and
+         /staff/dispense. The list/search branch below only renders when no
+         ?id= profile matched, same if/else split as the original. --}}
+    <div class="mb-3">
+        <a href="{{ url('staff/patients') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i> Back to patients</a>
+    </div>
+
+    <div class="row g-3 patient-profile-row">
+        <div class="col-lg-4">
+            <div class="card mb-3" data-profile-tab-panel="overview">
+                <div class="card-header">Patient Information</div>
+                <div class="card-body">
+                    <h5 class="mb-1">{{ trim(($patient->first_name ?? '') . ' ' . ($patient->last_name ?? '')) }}</h5>
+                    <div class="text-muted small mb-2">{{ ucfirst($patient->account_type) }} &middot; {{ '@' . $patient->username }}</div>
+                    <dl class="row mb-0 small">
+                        @if ($patient->account_type === 'student')
+                            <dt class="col-5">Student No.</dt><dd class="col-7">{{ $patient->student_no ?: '—' }}</dd>
+                            <dt class="col-5">Course</dt><dd class="col-7">{{ $patient->course ?: '—' }}</dd>
+                            <dt class="col-5">Year / Section</dt><dd class="col-7">{{ trim(($patient->year_level ?? '') . ' ' . ($patient->section ?? '')) ?: '—' }}</dd>
+                        @else
+                            <dt class="col-5">Employee No.</dt><dd class="col-7">{{ $patient->employee_no ?: '—' }}</dd>
+                            <dt class="col-5">Department</dt><dd class="col-7">{{ $patient->department ?: '—' }}</dd>
+                            <dt class="col-5">Position</dt><dd class="col-7">{{ $patient->position ?: '—' }}</dd>
+                        @endif
+                        <dt class="col-5">Gender</dt><dd class="col-7">{{ ucfirst((string) $patient->gender) }}</dd>
+                        <dt class="col-5">Birthdate</dt><dd class="col-7">{{ $patient->birthdate ? fmt_dt($patient->birthdate, 'M d, Y') : '—' }}</dd>
+                        <dt class="col-5">Contact</dt><dd class="col-7">{{ $patient->contact_no ?: '—' }}</dd>
+                        <dt class="col-5">Address</dt><dd class="col-7">{{ $patient->address ?: '—' }}</dd>
+                        <dt class="col-5">Emergency</dt><dd class="col-7">{{ $patient->emergency_name ?: '—' }} {{ $patient->emergency_contact ? '(' . $patient->emergency_contact . ')' : '' }}</dd>
+                    </dl>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-8">
+            <div class="card mb-3" data-profile-tab-panel="overview">
+                <div class="card-header">Latest Medical Record</div>
+                <div class="card-body">
+                    @if (! $medRec)
+                        <p class="text-muted mb-0">No medical record submitted yet.</p>
+                    @else
+                        <div class="row g-2 small">
+                            <div class="col-md-3"><strong>Blood Type:</strong> {{ $medRec->blood_type ?: '—' }}</div>
+                            <div class="col-md-3"><strong>Height:</strong> {{ $medRec->height_cm ?: '—' }} cm</div>
+                            <div class="col-md-3"><strong>Weight:</strong> {{ $medRec->weight_kg ?: '—' }} kg</div>
+                            <div class="col-md-3"><strong>Period:</strong> {{ $medRec->school_year . ' ' . $medRec->semester }}</div>
+                            <div class="col-12 mt-2"><strong>Allergies (free text):</strong> {{ $medRec->allergies_text ?: '—' }}</div>
+                            <div class="col-12"><strong>Existing Conditions:</strong> {{ $medRec->existing_conditions ?: '—' }}</div>
+                            <div class="col-12"><strong>Current Medications:</strong> {{ $medRec->current_medications ?: '—' }}</div>
+                            <div class="col-12"><strong>Immunizations:</strong> {{ $medRec->immunizations ?: '—' }}</div>
+                        </div>
+                    @endif
+                </div>
+            </div>
+
+            <div class="card mb-3" data-profile-tab-panel="overview">
+                <div class="card-header"><i class="bi bi-exclamation-triangle text-accent me-1"></i> Recorded Medicine Allergies</div>
+                <div class="card-body">
+                    @if (! $allergies->count())
+                        <p class="text-muted mb-0">No linked allergies recorded.</p>
+                    @else
+                        <ul class="mb-0">
+                            @foreach ($allergies as $a)
+                                <li>
+                                    <strong>{{ $a->allergen_name }}</strong>
+                                    <span class="badge bg-secondary ms-1">{{ ucfirst((string) $a->severity) }}</span>
+                                    @if ($a->notes)<span class="text-muted small">— {{ $a->notes }}</span>@endif
+                                </li>
+                            @endforeach
+                        </ul>
+                    @endif
+                </div>
+            </div>
+        </div>
+    </div>
+@else
 <div class="row g-3">
     <div class="col-12">
         <div class="card mb-3">
@@ -32,8 +113,7 @@
                     </div>
                     <div class="col d-flex flex-wrap gap-2 justify-content-start">
                         <button class="btn btn-primary text-nowrap"><i class="bi bi-search me-1"></i> Search</button>
-                        <a href="{{ route('staff.patients') }}" class="btn btn-outline-secondary text-nowrap">Reset</a>
-                        <a href="{{ route('staff.patients.register') }}" class="btn btn-accent text-nowrap"><i class="bi bi-plus-lg me-1"></i> New Patient</a>
+                        
                     </div>
                 </form>
             </div>
@@ -46,7 +126,10 @@
         </div>
     @endif
 
-    {!! \App\Services\StaffHistory::table('patients', $patients, 'patientTable') !!}
+    {{-- The original patients.php table echoed its own "No patients found."
+         empty row; pass it through so the shared history table keeps its
+         generic "No records found." label for every other page. --}}
+    {!! \App\Services\StaffHistory::table('patients', $patients, 'patientTable', 'No patients found.') !!}
 
     @if (($pagination['total'] ?? 0) > 1)
     <nav aria-label="Patient pagination" class="mt-3">
@@ -73,4 +156,5 @@
         </ul>
     </nav>
     @endif
+@endif
 @endsection

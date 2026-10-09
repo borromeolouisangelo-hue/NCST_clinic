@@ -24,9 +24,9 @@ use Illuminate\View\View;
  * identity match, newest first) that either UPDATEs quantity or INSERTs a
  * new batch inside a transaction, the transactionless delete branch (a
  * missing id falls through to the render with an error), and the GET
- * ?item_type= whitelist. The toolbar's ?q= and ?stock= inputs are DEAD in
- * the reference - echoed but never applied to any query - and stay dead
- * here; ?item_type= applies but has no form field (URL-only quirk).
+ * ?item_type= whitelist. In the reference the toolbar's ?q= and ?stock=
+ * inputs are DEAD (echoed but never applied to any query) and ?item_type=
+ * has no form field (URL-only); all three apply here (see below).
  *
  * The dead computation loop before the view (original 143-153) is kept
  * verbatim: its variables are recomputed inside the row blocks, but the
@@ -38,16 +38,24 @@ use Illuminate\View\View;
  * changed): the ?item_type= whitelist gains a visible toolbar field and a
  * second ?category= filter over the existing medicine_categories tree (a
  * root category matches its whole subtree, since items always hang off the
- * leaf rows), and the POST dispatch gains a third action, set_level, which
- * stores the manual Full / Half Empty / Empty fill level for non-piece units
- * in the existing system_settings key/value table (see App\Services\StockUnits
- * - the schema stays frozen). ?q= and ?stock= remain dead.
+ * leaf rows). The third POST action, set_level (Full / Half Empty / Empty
+ * fill levels), was removed together with the fill-level system - the Total
+ * Pieces column renders the tracking state from App\Services\StockUnits
+ * instead (Individual / Container + Partial / Roll + Partial, schema stays
+ * frozen). The two dead toolbar inputs now run: ?q= builds a
+ * (m.name LIKE ? OR c.name LIKE ?) condition in the list SQL (trimmed,
+ * same plain-LIKE convention as every other list search in the app), and
+ * ?stock= whitelists to 'in' | 'low' | 'out' before picking one of three
+ * disjoint buckets over the aggregated quantity in the pre-view loop
+ * (out = 0, low = 1..threshold, in = above threshold - the same
+ * max(1, threshold) clamp the view's status badges use); unknown values
+ * fall back to no filtering.
  *
  * Phase 3 (Step 1): the item-type CASE lookup (batch expiry tracking) and
  * the whole receive pipeline - four validations, manual beginTransaction /
  * commit / rollBack, batch merge, stock movement log and audit row - moved
- * into App\Services\StockService, injected below. The delete / set_level
- * actions, the list queries and the redirect/flash stay here.
+ * into App\Services\StockService, injected below. The delete action, the
+ * list queries and the redirect/flash stay here.
  */
 class InventoryController extends Controller
 {
@@ -65,7 +73,6 @@ class InventoryController extends Controller
         $suppliers = DB::select('SELECT id, name FROM suppliers ORDER BY name');
 
         $errors = [];
-        $levelError = null;
 
         // ---- Receive / delete (original lines 20-113) --------------------
         if ($request->isMethod('post')) {
@@ -126,40 +133,27 @@ class InventoryController extends Controller
                         ->with('success', 'Batch deleted.');
                 }
                 $errors[] = 'Batch could not be found.';
-            } elseif ($action === 'set_level') {
-                // Feature: manual Full / Half Empty / Empty level for the
-                // non-piece units (bottle, tube, roll, piece, ...). The value
-                // is kept in the existing system_settings key/value table
-                // (key stock_level_{medicine_id}) - the schema is frozen, so
-                // no column is invented. An unknown level or item is rejected
-                // without touching the database.
-                $level = (string) $request->post('level', '');
-
-                if (StockUnits::setLevel($mid, $level)) {
-                    AuditLogger::log(
-                        (int) $request->user()->id,
-                        'set_stock_level',
-                        'medicines',
-                        $mid,
-                        'Stock level for medicine #'.$mid.' set to '.StockUnits::levelLabel($level),
-                    );
-
-                    return redirect()
-                        ->route('staff.inventory')
-                        ->with('success', 'Stock level updated.');
-                }
-                $levelError = 'Invalid stock level selection.';
             }
+            // The old third action, set_level (Full / Half Empty / Empty
+            // buttons per row), was removed with the fill-level system. The
+            // Total Pieces column now shows the tracking state instead
+            // (Individual / Container + Partial / Roll + Partial) - see
+            // App\Services\StockUnits.
         }
 
         // ---- Inventory list (original lines 115-141) ---------------------
         // Feature: the item-type filter gains a visible form field and a
         // second, category-level filter built from the existing
         // medicine_categories tree (First Aid / Wound Care vs Medicine, plus
-        // every leaf category). ?q= and ?stock= stay dead (parity).
+        // every leaf category). ?q= searches names, ?stock= buckets the
+        // aggregated total (both dead in the reference, wired up here).
         $filterType = in_array($request->query('item_type', ''), ['all', 'medicine', 'first_aid'], true)
             ? $request->query('item_type')
             : 'all';
+        $q = trim((string) $request->query('q', ''));
+        $stockFilter = in_array($request->query('stock', ''), ['in', 'low', 'out'], true)
+            ? (string) $request->query('stock')
+            : '';
 
         // Roots (parent_id NULL) sort first, then their children - portable
         // across MySQL and SQLite, which both order NULLs first on ASC.
@@ -222,6 +216,14 @@ class InventoryController extends Controller
                 $params[] = $categoryId;
             }
         }
+        if ($q !== '') {
+            // Partial, case-insensitive (MySQL ci collation / SQLite's
+            // ASCII-ci LIKE) match over the item and category names - the
+            // placeholder promises "Name or category...".
+            $where[] = '(m.name LIKE ? OR c.name LIKE ?)';
+            $params[] = '%'.$q.'%';
+            $params[] = '%'.$q.'%';
+        }
         if ($where) {
             $inventorySql .= ' AND '.implode(' AND ', $where);
         }
@@ -229,8 +231,9 @@ class InventoryController extends Controller
         ORDER BY m.name ASC';
         $inventoryRows = DB::select($inventorySql, $params);
 
-        // Reference quirk: this loop's results are never read - the view
-        // recomputes every variable - but $today comes from here.
+        // The view recomputes every per-row variable this loop derives, but
+        // the loop owns $today and row membership: ?stock= keeps one of
+        // three disjoint, exhaustive buckets over the aggregated quantity.
         $filteredInventory = [];
         $today = date('Y-m-d');
         foreach ($inventoryRows as $row) {
@@ -240,6 +243,17 @@ class InventoryController extends Controller
             $hasExpired = (int) ($row->has_expired ?? 0) === 1;
             $isExpiringSoon = $nextExpiry && strtotime($nextExpiry) >= strtotime($today) && strtotime($nextExpiry) <= strtotime('+30 days');
 
+            if ($stockFilter !== '') {
+                $keep = match ($stockFilter) {
+                    'out' => $rowTotal <= 0,
+                    'low' => $rowTotal > 0 && $rowTotal <= $threshold,
+                    'in' => $rowTotal > $threshold,
+                };
+                if (! $keep) {
+                    continue;
+                }
+            }
+
             $filteredInventory[] = $row;
         }
 
@@ -247,10 +261,9 @@ class InventoryController extends Controller
             'title' => 'Inventory',
             'shell' => ShellContext::fromUser($request->user(), activePath: 'staff/inventory'),
             'errors' => $errors,
-            'levelError' => $levelError,
             'medicines' => $medicines,
             'suppliers' => $suppliers,
-            'q' => $request->query('q', ''),
+            'q' => $q,
             'stock' => $request->query('stock', ''),
             'filterType' => $filterType,
             'filterCategory' => $filterCategory,

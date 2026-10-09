@@ -28,6 +28,8 @@ dashboard, reports, patients, patient_register, consultations, certificates, dis
 medicine_requests (stub), inventory, stock_adjust (stub), equipment_loans, sick_leaves,
 deduction_logs, history, history_logs (stub), settings — all routed in `routes/web.php`
 (Phases 11–22), full_diff IDENTICAL, feature-tested.
+  Post-migration: `deduction_logs` was removed end to end (controller, view, route,
+  nav entries, tests) — Transaction History covers those records.
 
 ### Pages — user/ (11)
 dashboard, medical_form, my_consultations, my_certificates, my_requests, profile,

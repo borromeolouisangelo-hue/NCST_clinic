@@ -10,8 +10,13 @@
     exact leading whitespace; $pt['x'] / $row['x'] become ->x (stdClass rows,
     same values); $stock/$limit move from the option loop into the controller
     (same values, same keys missing so data-limit stays 10); POST CSRF
-    failure raises 419 (Phase 6); the success flash is written but never
-    rendered (write-only legacy slot - see partials/flash.blade.php).
+    failure raises 419 (Phase 6); the redirect flashes (dispense outcome and
+    the Mark Depleted result) are carried to the user by
+    partials/flash-toast - partials/flash.blade.php itself still renders
+    nothing (write-only legacy slot); a scoped rule in style.css keeps this
+    dialog within the viewport (fixed card header, scrolling card body) so
+    the taller form (tracking block + allergy decision state) stays
+    reachable on short viewports.
 
     Legacy quirks kept: ?user_id= preselects the patient on GET but
     medicine_id is POST-only; qty must be exactly 1 (a missing quantity
@@ -20,10 +25,15 @@
     the conflicts list, decision block and auto-open script re-render on any
     POST that reached the conflict checks.
 
-    Post-migration feature: #dispensePieceState is a read-only line under the
-    quantity help text fed by the controller's $pieceStates JSON - the piece
-    state shown on the inventory page (11/12 for tablets, 49/50 for boxes) or
-    the manual Full / Half Empty / Empty level. The option markup itself is
+    Tracking feature: #dispensePieceState is the "Stock: ..." line under the
+    quantity help text fed by the controller's $pieceStates JSON - the exact
+    piece count for Individual items ("Stock: 103 tablets"), the
+    unopened/opened counts for Container + Partial / Roll + Partial items
+    ("Stock: 8 unopened bottles · 1 opened bottle"), which also render the
+    Dispense from radios (existing opened vs open new), the Usage radios
+    (Small / Moderate / Large - a record only, never a quantity) and the
+    separate Mark Depleted form. The old Full / Half Empty / Empty fill-level
+    line is gone with the fill-level system. The option markup itself is
     untouched.
 --}}
 @extends('layouts.dashboard')
@@ -31,6 +41,7 @@
 @section('title', $title)
 
 @section('content')
+@include('layouts.partials.flash-toast')
 <div class="row g-3">
     <div class="col-12">
         <div class="modal fade" id="dispenseModal" tabindex="-1" aria-labelledby="dispenseModalLabel" aria-hidden="true">
@@ -83,6 +94,35 @@
                         <div id="dispenseQuantityHelp" class="form-text">Use the item unit shown above (box, roll, tube, bottle, piece, etc.).</div>
                         <div id="dispensePieceState" class="form-text" aria-live="polite"></div>
                     </div>
+                    <div class="mb-3 d-none" id="dispenseTrackingBlock">
+                        <label class="form-label" id="dispenseFromLabel">Dispense from</label>
+                        <div class="d-flex flex-wrap gap-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="dispense_from" id="dispenseFromExisting" value="existing" disabled>
+                                <label class="form-check-label" for="dispenseFromExisting" id="dispenseFromExistingText">Existing opened container</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="dispense_from" id="dispenseFromNew" value="new" disabled>
+                                <label class="form-check-label" for="dispenseFromNew" id="dispenseFromNewText">Open new container</label>
+                            </div>
+                        </div>
+                        <label class="form-label mt-2 mb-1">Usage</label>
+                        <div class="d-flex flex-wrap gap-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="usage" id="dispenseUsageSmall" value="small" disabled>
+                                <label class="form-check-label" for="dispenseUsageSmall">Small</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="usage" id="dispenseUsageModerate" value="moderate" disabled>
+                                <label class="form-check-label" for="dispenseUsageModerate">Moderate</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="usage" id="dispenseUsageLarge" value="large" disabled>
+                                <label class="form-check-label" for="dispenseUsageLarge">Large</label>
+                            </div>
+                        </div>
+                        <div class="form-text">Usage is a record only - it never represents percentages or exact amounts. Stock changes only when a new container/roll is opened or an opened one is marked depleted below.</div>
+                    </div>
                     <div class="mb-3">
                         <label class="form-label">Notes</label>
                         <textarea name="notes" class="form-control" rows="2"></textarea>
@@ -100,18 +140,28 @@
                         </div>
                         <div class="d-flex gap-2">
                             <button type="submit" name="allergy_decision" value="accept" class="btn btn-danger flex-fill"><i class="bi bi-check-circle me-1"></i> Accept and Dispense</button>
-                            <button type="submit" name="allergy_decision" value="reject" class="btn btn-outline-secondary flex-fill" formnovalidate><i class="bi bi-x-circle me-1"></i> Reject Request</button>
+                            <button type="submit" name="allergy_decision" value="reject" class="btn btn-outline-secondary flex-fill" formnovalidate><i class="bi bi-x-circle me-1"></i> Decline Request</button>
                         </div>
                         <div class="mt-3">
                             <button type="button" class="btn btn-outline-secondary w-100" data-bs-dismiss="modal">Cancel</button>
                         </div>
                     @else
                         <div class="d-flex gap-2">
-                            <button class="btn btn-accent flex-fill" data-swal-add="medicine request"><i class="bi bi-prescription2 me-1"></i> Dispense Item</button>
+                            <button type="submit"class="btn btn-accent" data-swal-add="medicine request"><i class="bi bi-prescription2 me-1"></i> Dispense Item</button>
                             <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
                         </div>
                     @endif
                 </form>
+                <div class="mt-2 d-none" id="dispenseDepleteBlock">
+                    <form method="post" id="dispenseDepleteForm" onsubmit="return confirm('Mark the opened container/roll as depleted? One unit will leave stock.')">
+                        @csrf
+
+                        <input type="hidden" name="action" value="deplete">
+                        <input type="hidden" name="medicine_id" id="dispenseDepleteMedicineId" value="">
+                        <button type="submit" class="btn btn-outline-warning w-100"><i class="bi bi-x-octagon me-1"></i> Mark Depleted</button>
+                        <div class="form-text">Use when the opened container/roll is actually finished - one unit leaves stock and the opened count drops. Opening, dispensing and depletion are recorded as separate inventory events.</div>
+                    </form>
+                </div>
             </div>
         </div>
             </div></div>
@@ -124,7 +174,7 @@
                 <div class="row g-2 align-items-end audit-toolbar mb-2">
                     <div class="col">
                         <label class="form-label">Search</label>
-                        <input id="dispenseHistorySearch" type="search" class="form-control form-control-sm" data-live-filter="#dispenseHistoryTable tbody tr" data-live-filter-count="dispenseHistoryResultCount" placeholder="Search visible history..." aria-label="Search medicine history">
+                        <input id="dispenseHistorySearch" type="search" class="form-control form-control-sm" data-live-filter="#dispenseTable tbody tr" data-live-filter-count="dispenseHistoryResultCount" placeholder="Search visible history..." aria-label="Search medicine history">
                     </div>
                     <div class="col-auto">
                         <label class="form-label">Filter</label>
@@ -189,21 +239,65 @@ document.addEventListener('DOMContentLoaded', function () {
     var helpText = document.getElementById('dispenseQuantityHelp');
     var pieceStateEl = document.getElementById('dispensePieceState');
     var dispenseModal = document.getElementById('dispenseModal');
+    var trackingBlock = document.getElementById('dispenseTrackingBlock');
+    var depleteBlock = document.getElementById('dispenseDepleteBlock');
+    var depleteMedicineId = document.getElementById('dispenseDepleteMedicineId');
+    var fromExisting = document.getElementById('dispenseFromExisting');
+    var fromNew = document.getElementById('dispenseFromNew');
+    var fromExistingText = document.getElementById('dispenseFromExistingText');
+    var fromNewText = document.getElementById('dispenseFromNewText');
+    var usageRadios = Array.prototype.slice.call(document.querySelectorAll('input[name="usage"]'));
     var pieceStates = @json($pieceStates);
 
-    // Post-migration feature: mirrors the inventory page's piece display in
-    // the dispensing form - 11/12 for tablets (12 per package), 49/50 for
-    // boxes (50 per box), or the manual Full / Half Empty / Empty level.
-    function applyPieceState() {
+    // Tracking methods (state shared with the inventory page's Total
+    // Pieces column, which shows the compact cell copy - "0/16 opened",
+    // "11/12 deducted" - while this modal keeps the verbose label):
+    // "Stock: 103 tablets" for Individual items, "Stock: 8 unopened
+    // bottles · 1 opened bottle" for Container + Partial items ("4
+    // unopened rolls · 1 opened roll" for Roll + Partial). Only partial
+    // items get the Dispense from / Usage radios (usage is a record
+    // only - never a quantity) and the Mark Depleted button; impossible
+    // choices are disabled rather than guessed.
+    function applyTracking() {
         if (!pieceStateEl || !medicineSelect) return;
-        var st = pieceStates[medicineSelect.value];
-        if (!st) {
-            pieceStateEl.textContent = '';
-            return;
+        var st = pieceStates[medicineSelect.value] || null;
+        var partial = !!st && st.method !== 'individual';
+
+        pieceStateEl.textContent = st ? ('Stock: ' + (st.label || st.text)) : '';
+
+        var opened = partial ? (parseInt(st.opened, 10) || 0) : 0;
+        var unopened = partial ? (parseInt(st.unopened, 10) || 0) : 0;
+
+        if (trackingBlock) {
+            trackingBlock.classList.toggle('d-none', !partial);
         }
-        pieceStateEl.textContent = st.tracked
-            ? ('Pieces in the open package: ' + st.text + ' (' + st.size + ' per ' + st.unit + ')')
-            : ('Fill level: ' + st.text + ' (' + st.unit + ')');
+        if (fromExisting && fromNew) {
+            if (partial) {
+                var noun = st.method === 'roll' ? 'roll' : 'container';
+                if (fromExistingText) fromExistingText.textContent = 'Existing opened ' + noun;
+                if (fromNewText) fromNewText.textContent = 'Open new ' + noun;
+                fromExisting.disabled = opened < 1;
+                fromNew.disabled = unopened < 1;
+                if (fromExisting.disabled) {
+                    fromNew.checked = true;
+                } else if (fromNew.disabled) {
+                    fromExisting.checked = true;
+                } else if (!fromExisting.checked && !fromNew.checked) {
+                    fromExisting.checked = true;
+                }
+                usageRadios.forEach(function (radio) { radio.disabled = false; });
+            } else {
+                fromExisting.disabled = true;
+                fromExisting.checked = false;
+                fromNew.disabled = true;
+                fromNew.checked = false;
+                usageRadios.forEach(function (radio) { radio.disabled = true; radio.checked = false; });
+            }
+        }
+
+        var showDeplete = partial && opened >= 1 && !!medicineSelect.value;
+        if (depleteBlock) depleteBlock.classList.toggle('d-none', !showDeplete);
+        if (depleteMedicineId) depleteMedicineId.value = showDeplete ? medicineSelect.value : '';
     }
 
     function applyMedicineLimit() {
@@ -231,7 +325,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 quantityInput.value = '1';
             }
         }
-        applyPieceState();
+        applyTracking();
     }
 
     if (medicineSelect) {

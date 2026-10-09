@@ -102,7 +102,6 @@ class Navigation
             ]],
             ['section' => 'Patients', 'items' => [
                 ['path' => 'staff/patients', 'icon' => 'bi-people', 'label' => 'Patients'],
-                ['path' => 'staff/patient_register', 'icon' => 'bi-person-plus', 'label' => 'Register Patient'],
             ]],
             ['section' => 'Clinic Operations', 'items' => [
                 ['path' => 'staff/consultations', 'icon' => 'bi-clipboard2-pulse', 'label' => 'Visits'],
@@ -118,7 +117,6 @@ class Navigation
             ]],
             ['section' => 'Records', 'items' => [
                 ['path' => 'staff/history', 'icon' => 'bi-card-list', 'label' => 'History'],
-                ['path' => 'staff/deduction_logs', 'icon' => 'bi-receipt', 'label' => 'Deduction Logs'],
                 ['path' => 'staff/reports', 'icon' => 'bi-graph-up', 'label' => 'Reports'],
             ]],
             ['section' => 'Notifications', 'items' => [

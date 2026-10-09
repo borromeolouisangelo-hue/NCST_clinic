@@ -1,8 +1,10 @@
 {{--
     Staff dashboard - exact port of staff/dashboard.php (original lines
     118-303): KPI stat cards with trend badges, the line-chart card with its
-    period sidebar, the two bar-chart cards, and the low
-    stock alerts table.
+    period sidebar, the two bar-chart cards, the recent-activity preview
+    cards (10 newest rows per history section, each with an above-the-card
+    View All button to its dedicated page), and the low stock
+    alerts table.
 
     The scripts block sits at the end of the content area exactly like the
     original (lines 267-301): charts.js then the inline init, both before
@@ -107,6 +109,43 @@
                     </div>
                 </div>
 
+                <!-- Recent activity: the 10 newest records per history
+                     section (staffData()'s $recent preview through the same
+                     StaffHistory::table() the full pages use). Each card's
+                     View All button sits OUTSIDE and ABOVE the card, aligned
+                     left, and links to that section's dedicated page. -->
+                <div class="row g-3 mb-3">
+                    @php
+                        $recentViewAll = [
+                            'patients' => route('staff.patients'),
+                            'consultations' => route('staff.consultations'),
+                            'certificates' => route('staff.certificates'),
+                            'sick-leaves' => route('staff.sick_leaves'),
+                            'dispense' => route('staff.dispense'),
+                            'inventory' => route('staff.inventory'),
+                            'equipment-loans' => route('staff.equipment_loans'),
+                        ];
+                    @endphp
+                    @foreach ($historySections as $sectionKey => $sectionMeta)
+                        <div class="col-12">
+                            <a href="{{ $recentViewAll[$sectionKey] ?? route('staff.history', ['tab' => $sectionKey]) }}" class="btn btn-sm btn-outline-primary mb-2">
+                                View All <i class="bi bi-arrow-right"></i>
+                            </a>
+                            <div class="card">
+                                <div class="card-header"><i class="bi {{ $sectionMeta['icon'] }} me-1"></i> Recent {{ $sectionMeta['label'] }}</div>
+                                @if (! empty($recent[$sectionKey]['error']))
+                                    <div class="alert alert-danger py-2 mb-0 rounded-0">
+                                        <i class="bi bi-exclamation-triangle me-1"></i> This section could not be loaded right now.
+                                    </div>
+                                @endif
+                                <div class="table-responsive">
+                                    {!! \App\Services\StaffHistory::table($sectionKey, $recent[$sectionKey]['rows'] ?? []) !!}
+                                </div>
+                            </div>
+                        </div>
+                    @endforeach
+                </div>
+
                 <!-- Low Stock Alerts -->
                 <div class="row g-3">
                     <div class="col-12">
@@ -131,7 +170,10 @@
                 </div>
 
                 <!-- Feature 10: Dashboard Calendar -->
-                @include('layouts.partials.calendar', ['calendarEvents' => $calendarEvents ?? []])
+                @include('layouts.partials.calendar', [
+                    'calendarEvents' => $calendarEvents ?? [],
+                    'calendarViewAllUrl' => route('staff.calendar'),
+                ])
 
             </div>
 

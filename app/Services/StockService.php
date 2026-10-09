@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\DB;
  * App\Http\Controllers\Staff\InventoryController::index() (Phase 3, Step 1).
  *
  * The controller keeps the HTTP concerns: reading the POST fields, the
- * action dispatch (receive / delete / set_level) and the redirect/flash.
+ * action dispatch (receive / delete) and the redirect/flash.
  * This service owns the receiving domain logic:
  *
  *  - resolveExpiry(): the item-type CASE lookup that makes first aid items

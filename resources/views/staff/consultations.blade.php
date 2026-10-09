@@ -11,7 +11,7 @@
     leading whitespace; $edit['x'] ?? '' becomes $edit->x ?? '' (object|null,
     same null-safe semantics); the conditional data-swal-save/data-swal-add
     attribute is echoed raw via {!! !!} like the original's unescaped
-    <?php; the filter <select> reads filterRaw so an invalid ?filter= selects
+        the filter select reads filterRaw so an invalid ?filter= selects
     no option while the query already collapsed to 'all' - exactly the
     original's split between lines 74-77 and 174-177.
 
@@ -19,6 +19,7 @@
     the SweetAlert handlers and the reset-on-hide script) come from the
     shared main.js/style.css assets both apps serve.
 --}}
+
 @extends('layouts.dashboard')
 
 @section('title', $title)
@@ -28,6 +29,7 @@
     <div class="col-12">
         <div class="modal fade" id="consultationModal" tabindex="-1" aria-labelledby="consultationModalLabel" aria-hidden="true">
             <div class="modal-dialog modal-dialog-centered modal-md">
+                <div class="modal-content">
                 <div class="card">
                     <div class="card-header" id="consultationModalLabel">{{ $edit ? 'Edit Consultation' : 'New Consultation' }}</div>
                     <div class="card-body">
@@ -71,12 +73,16 @@
                                 <textarea name="notes" class="form-control" rows="2">{{ $edit->notes ?? '' }}</textarea>
                             </div>
                             @csrf
-
+                                <div class="d-flex gap-2">
                             <button class="btn btn-primary" {!! $edit ? 'data-swal-save="consultation"' : 'data-swal-add="consultation"' !!}><i class="bi bi-save me-1"></i> {{ $edit ? 'Update' : 'Save Consultation' }}</button>
+                            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                            </div>
                             @if ($edit)<a href="{{ url('staff/consultations') }}" class="btn btn-outline-secondary">Cancel</a>@endif
+                                
                         </form>
                     </div>
                 </div>
+            </div>
             </div>
         </div>
     </div>
@@ -87,7 +93,7 @@
                 <div class="row g-2 align-items-end audit-toolbar mb-2">
                     <div class="col">
                         <label class="form-label">Search</label>
-                        <input id="consultationsSearch" type="search" class="form-control form-control-sm" data-live-filter="#consultationsTable tbody tr" data-live-filter-count="consultationsResultCount" placeholder="Search visible consultations..." aria-label="Search visible consultations">
+                        <input id="consultationsSearch" type="search" class="form-control form-control-sm" data-live-filter="#consultationTable tbody tr" data-live-filter-count="consultationsResultCount" placeholder="Search visible consultations..." aria-label="Search visible consultations">
                     </div>
                     <div class="col-auto">
                         <label class="form-label">Filter</label>
@@ -103,7 +109,7 @@
                     <div class="col d-flex flex-wrap gap-2 justify-content-start">
                         
                         <button type="button" class="btn btn-sm btn-primary text-nowrap" data-search-trigger="#consultationsSearch"><i class="bi bi-search me-1"></i> Search</button>
-                        <a href="{{ url('staff/consultations') }}" class="btn btn-sm btn-outline-secondary text-nowrap">Reset</a>
+                        
                         <button type="button" class="btn btn-sm btn-accent text-nowrap" data-bs-toggle="modal" data-bs-target="#consultationModal"><i class="bi bi-plus-lg me-1"></i> New Consultation</button>
                     </div>
                 </div>

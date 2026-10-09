@@ -550,7 +550,6 @@ class InventoryTest extends TestCase
         $staff = $this->makeStaff();
 
         $this->get('/staff/inventory')->assertRedirect(route('login'));
-        $this->get('/staff/deduction_logs')->assertRedirect(route('login'));
 
         $admin = $this->makeUser('boss', 'admin', null);
         $this->actingAs($admin)->get('/staff/inventory')->assertRedirect(route('admin.dashboard'));
@@ -559,7 +558,6 @@ class InventoryTest extends TestCase
         $this->actingAs($student)->get('/staff/inventory')->assertRedirect(route('user.dashboard'));
 
         $this->actingAs($staff)->get('/staff/inventory')->assertOk();
-        $this->actingAs($staff)->get('/staff/deduction_logs')->assertOk();
     }
 
     // ---------------------------------------------------------------------

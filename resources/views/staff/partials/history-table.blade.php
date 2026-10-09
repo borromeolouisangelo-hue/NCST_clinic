@@ -3,7 +3,7 @@
             {!! $hdr !!}            </thead>
             <tbody>
             @if (! $rows)
-                <tr><td colspan="{{ (int) $colspan }}" class="text-center text-muted py-4">No records found.</td></tr>
+                <tr><td colspan="{{ (int) $colspan }}" class="text-center text-muted py-4">{{ $emptyText ?? 'No records found.' }}</td></tr>
             @else
 @php
     // Post-migration piece state (feature 1) - one OUT query + one settings
@@ -116,9 +116,12 @@
     }
     // pieces_per_unit was removed from the schema - pieces == stock units.
     $totalPieces = $qty;
-    // Post-migration piece/package state (App\Services\StockUnits): 11/12 for
-    // tablets, 49/50 for boxes, and the Full/Half Empty/Empty level for the
-    // non-piece units (read-only here - the buttons live on the inventory page).
+    // Tracking state (App\Services\StockUnits): the package position for
+    // quantitative Individual items ("11/12 deducted", "20/50 deducted";
+    // plain stock count for units without a package size) and the opened
+    // ratio for Container + Partial / Roll + Partial items ("0/16
+    // opened", "1/4 opened" - read-only here; the Mark Depleted button
+    // lives on the dispensing screen).
     $stockState = $stockStates[(int) ($r['id'] ?? 0)] ?? null;
 @endphp
                                         <tr>

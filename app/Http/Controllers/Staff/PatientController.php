@@ -38,11 +38,13 @@ class PatientController extends Controller
         $viewId = (int) $request->query('id', 0);
 
         // ---- Single patient detail (original lines 12-48) --------------------
+        // The original also loaded the 10 most recent consultations and
+        // dispenses for the profile's activity cards; those sections were
+        // removed from this overview (the records remain on /staff/consultations
+        // and /staff/dispense), so their queries went with them.
         $patient = null;
         $medRec = null;
         $allergies = collect();
-        $consultations = collect();
-        $dispenses = collect();
 
         if ($viewId > 0) {
             $patient = DB::table('users as u')
@@ -55,6 +57,10 @@ class PatientController extends Controller
                     'ed.employee_no', 'ed.department', 'ed.position'
                 )
                 ->where('u.id', $viewId)
+                // Only patient accounts profile-render: a staff/admin id (or a
+                // nonexistent one) resolves to null and the page falls back to
+                // the list, so ?id= can never surface a non-patient account.
+                ->where('u.role', 'user')
                 ->limit(1)
                 ->first();
 
@@ -67,22 +73,6 @@ class PatientController extends Controller
 
                 $allergies = DB::table('user_allergies')
                     ->where('user_id', $viewId)
-                    ->get();
-
-                $consultations = DB::table('consultations as c')
-                    ->leftJoin('profiles as pf', 'pf.user_id', '=', 'c.staff_id')
-                    ->select('c.*', DB::raw("CONCAT(pf.first_name, ' ', pf.last_name) AS staff_name"))
-                    ->where('c.patient_id', $viewId)
-                    ->orderByDesc('c.consultation_date')
-                    ->limit(10)
-                    ->get();
-
-                $dispenses = DB::table('dispense_logs as d')
-                    ->join('medicines as m', 'm.id', '=', 'd.medicine_id')
-                    ->select('d.*', 'm.name as medicine_name')
-                    ->where('d.user_id', $viewId)
-                    ->orderByDesc('d.dispensed_at')
-                    ->limit(10)
                     ->get();
             }
         }
@@ -139,8 +129,6 @@ class PatientController extends Controller
             'patient' => $patient,
             'medRec' => $medRec,
             'allergies' => $allergies,
-            'consultations' => $consultations,
-            'dispenses' => $dispenses,
             'search' => $search,
             'typeFilter' => $typeFilter,
             'patients' => $patients,

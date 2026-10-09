@@ -319,8 +319,12 @@ class StaffHistory
      * Render the <table> (head + body) for one history section through the
      * Blade mirror of the original staff_history_table() - columns, badges,
      * links and actions match the corresponding staff page exactly.
+     *
+     * $emptyText overrides the shared "No records found." row label for
+     * pages whose original echoed its own wording (staff/patients.php said
+     * "No patients found."); null keeps the shared label byte-identical.
      */
-    public static function table(string $tab, array $rows, string $tableId = ''): string
+    public static function table(string $tab, array $rows, string $tableId = '', ?string $emptyText = null): string
     {
         return view('staff.partials.history-table', [
             'tab' => $tab,
@@ -328,6 +332,7 @@ class StaffHistory
             'tableId' => $tableId,
             'colspan' => self::colspan($tab),
             'hdr' => self::headerRow($tab),
+            'emptyText' => $emptyText,
         ])->render();
     }
 

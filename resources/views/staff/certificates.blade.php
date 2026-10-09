@@ -163,7 +163,10 @@
                         </div>
                         @csrf
 
-                    <div class="d-flex gap-2"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button><button class="btn btn-primary" data-swal-add="certificate"><i class="bi bi-file-earmark-plus me-1"></i> Issue</button></div>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-primary" data-swal-add="certificate"><i class="bi bi-file-earmark-plus me-1"></i> Issue Certificate</button>
+                        
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
                     </form>
                 </div>
             </div>
@@ -193,8 +196,8 @@
                         <div class="col d-flex flex-wrap gap-2 justify-content-start">
                             
                             <button type="button" class="btn  btn-primary text-nowrap" data-search-trigger="#certificatesSearch"><i class="bi bi-search me-1"></i> Search</button>
-                            <a href="{{ route('staff.certificates') }}" class="btn  btn-outline-secondary text-nowrap">Reset</a>
-                            <button type="button" class="btn  btn-accent text-nowrap" data-bs-toggle="modal" data-bs-target="#certificateModal"><i class="bi bi-file-earmark-plus me-1"></i> Create Certificate</button>
+                            
+                            <button type="button" class="btn  btn-accent text-nowrap" data-bs-toggle="modal" data-bs-target="#certificateModal"><i class="bi bi-file-earmark-plus me-1"></i> Issue</button>
                         </div>
                     </div>
                  </div>

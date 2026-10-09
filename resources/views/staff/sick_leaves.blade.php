@@ -77,7 +77,7 @@
                     </div>
                     <div class="col d-flex flex-wrap gap-2 justify-content-start">
                         <button class="btn btn-primary text-nowrap"><i class="bi bi-search me-1"></i> Search</button>
-                        <a href="{{ route('staff.sick_leaves') }}" class="btn btn-outline-secondary text-nowrap">Reset</a>
+                        
                     </div>
                 </form>
             </div>

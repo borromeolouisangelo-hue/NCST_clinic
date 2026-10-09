@@ -85,9 +85,6 @@
             <a href="{{ url('staff/patients') }}" class="nav-link {{ request()->is('staff/patients') ? 'active' : '' }}">
                 <i class="bi bi-people"></i> Patients
             </a>
-            <a href="{{ url('staff/patient_register') }}" class="nav-link {{ request()->is('staff/patient_register') ? 'active' : '' }}">
-                <i class="bi bi-person-plus"></i> Register Patient
-            </a>
 
             <div class="nav-section">Clinical Operations</div>
             <a href="{{ url('staff/consultations') }}" class="nav-link {{ request()->is('staff/consultations') ? 'active' : '' }}">
@@ -103,8 +100,12 @@
             </a>
 
             <a href="{{ url('staff/certificates') }}" class="nav-link {{ request()->is('staff/certificates') ? 'active' : '' }}">
-                <i class="bi bi-file-medical"></i> Certificate
+                <i class="bi bi-file-medical"></i> Medical Certificate
             </a>    
+            </a>
+
+            <a href="{{ url('staff/sick_leaves') }}" class="nav-link {{ request()->is('staff/sick_leaves') ? 'active' : '' }}">
+                <i class="bi bi-file-medical"></i> Sick Leaves
             </a>
 
             <div class="nav-section">Inventory</div>
@@ -116,13 +117,16 @@
 
             <div class="nav-section">Records</div>
             <a href="{{ url('staff/history') }}" class="nav-link {{ request()->is('staff/history') ? 'active' : '' }}">
-                <i class="bi bi-card-list"></i> History
+                <i class="bi bi-card-list"></i> Transaction History
             </a>
-            <a href="{{ url('staff/deduction_logs') }}" class="nav-link {{ request()->is('staff/deduction_logs') ? 'active' : '' }}">
-                <i class="bi bi-receipt"></i> Deduction Logs
-            </a>
+            
             <a href="{{ url('staff/reports') }}" class="nav-link {{ request()->is('staff/reports') ? 'active' : '' }}">
                 <i class="bi bi-graph-up"></i> Reports
+            </a>
+
+            <div class="nav-section">Calendar</div>
+            <a href="{{ url('staff/calendar') }}" class="nav-link {{ request()->is('staff/calendar') ? 'active' : '' }}">
+                <i class="bi bi-calendar"></i> Calendar
             </a>
 
             <div class="nav-section">Notifications</div>

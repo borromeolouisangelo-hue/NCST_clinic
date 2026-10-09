@@ -266,6 +266,45 @@ class EquipmentLoansTest extends TestCase
             ->assertSee($returnedOn, false);
     }
 
+    public function test_all_filter_shows_every_status_and_keeps_other_filters(): void
+    {
+        $staff = $this->makeStaff();
+        $borrower = $this->makePatient('stu', 'student', 'Borrow', 'Ed', 'ST-001');
+        $other = $this->makePatient('emp', 'employee', 'Returned', 'Kid', 'EMP-001');
+        $eq = $this->makeEquipment('Wheelchair', 2, 1);
+        $this->makeLoan($borrower, $eq, 1, date('Y-m-d'), date('Y-m-d 09:00:00'), 'borrowed');
+        $this->makeLoan($other, $eq, 1, date('Y-m-d', strtotime('-3 days')), date('Y-m-d 09:00:00', strtotime('-3 days')), 'returned');
+
+        $borrowedOn = date('M d, Y g:i A', strtotime(date('Y-m-d 09:00:00')));
+        $returnedOn = date('M d, Y g:i A', strtotime(date('Y-m-d 09:00:00', strtotime('-3 days'))));
+
+        // The explicit All option: status=all drops the status restriction
+        // in the backend query, so rows of every supported status render
+        // together (same behavior the legacy junk values relied on).
+        $this->actingAs($staff)->get('/staff/equipment_loans?status=all')
+            ->assertOk()
+            ->assertSee($borrowedOn, false)
+            ->assertSee($returnedOn, false)
+            ->assertSee('<option value="all" selected>All</option>', false);
+
+        // All removes ONLY the status restriction: an active ?q= still
+        // narrows the rows, and the hidden field carries it through the
+        // status form submission.
+        $this->actingAs($staff)->get('/staff/equipment_loans?status=all&q=Borrow')
+            ->assertOk()
+            ->assertSee($borrowedOn, false)
+            ->assertDontSee($returnedOn, false)
+            ->assertSee('<input type="hidden" name="q" value="Borrow"', false);
+
+        // The default and legacy filters are untouched: no status parameter
+        // still means borrowed-only, with All present but not selected.
+        $this->actingAs($staff)->get('/staff/equipment_loans')
+            ->assertOk()
+            ->assertSee('<option value="all"', false)
+            ->assertDontSee('<option value="all" selected>', false)
+            ->assertDontSee($returnedOn, false);
+    }
+
     public function test_empty_state_when_no_loans_in_view(): void
     {
         $staff = $this->makeStaff();

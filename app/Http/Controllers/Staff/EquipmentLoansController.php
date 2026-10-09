@@ -126,7 +126,7 @@ class EquipmentLoansController extends Controller
         $overdueCount = $this->equipmentLoanService->overdueAlertCount($statusFilter);
 
         return view('staff.equipment_loans', [
-            'title' => 'Borrow',
+            'title' => 'Equipment Loans',
             'shell' => ShellContext::fromUser($request->user(), activePath: 'staff/equipment_loans'),
             'errors' => $errors,
             'patients' => $patients,

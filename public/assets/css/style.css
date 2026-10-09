@@ -1108,6 +1108,27 @@ textarea.form-control {
     gap: .5rem !important;
 }
 
+/* Dispense modal: the form grew (Dispense from / Usage / Mark Depleted) and
+   the allergy-decision state grew it further, so the dialog is capped at the
+   viewport and the card body scrolls - header pinned, buttons reachable. */
+#dispenseModal .modal-content {
+    max-height: calc(100vh - 2rem);
+}
+
+#dispenseModal .card {
+    min-height: 0;
+    overflow: hidden;
+}
+
+#dispenseModal .card-header {
+    flex-shrink: 0;
+}
+
+#dispenseModal .card-body {
+    min-height: 0;
+    overflow-y: auto;
+}
+
 .compact-modal-body {
     padding-top: .9rem;
 }

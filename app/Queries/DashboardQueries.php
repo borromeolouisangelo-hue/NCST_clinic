@@ -425,8 +425,8 @@ class DashboardQueries
             // Pending sick leave requests
             $pendingLeaves = $safeQuery(function () {
                 return DB::table('sick_leaves as sl')
-                    ->join('users u', 'u.id', '=', 'sl.user_id')
-                    ->join('profiles p', 'p.user_id', '=', 'u.id')
+                    ->join('users as u', 'u.id', '=', 'sl.user_id')
+                    ->join('profiles as p', 'p.user_id', '=', 'u.id')
                     ->where('sl.status', 'pending')
                     ->select('sl.id', 'sl.reason', 'sl.start_date', 'sl.end_date', 'sl.created_at', 'u.username', 'p.first_name', 'p.last_name')
                     ->orderBy('sl.created_at')
@@ -441,7 +441,7 @@ class DashboardQueries
                     'end' => $l->end_date ? $l->end_date.' 23:59' : null,
                     'type' => 'sick_leave',
                     'color' => '#fd7e14', // orange
-                    'url' => 'staff/sick_leaves',
+                    'url' => url('staff/sick_leaves'),
                     'description' => "Sick leave request: {$l->reason}",
                 ];
             }
@@ -469,7 +469,7 @@ class DashboardQueries
                     'start' => date('Y-m-d').' 00:00',
                     'type' => 'low_stock',
                     'color' => '#dc3545', // danger red
-                    'url' => 'admin/medicines',
+                    'url' => url('admin/medicines'),
                     'description' => "Stock: {$m->stock} (threshold: {$m->low_stock_threshold})",
                 ];
             }
@@ -480,8 +480,8 @@ class DashboardQueries
             // Today's consultations
             $todayConsultations = $safeQuery(function () {
                 return DB::table('consultations as c')
-                    ->join('users u', 'u.id', '=', 'c.patient_id')
-                    ->join('profiles p', 'p.user_id', '=', 'u.id')
+                    ->join('users as u', 'u.id', '=', 'c.patient_id')
+                    ->join('profiles as p', 'p.user_id', '=', 'u.id')
                     ->whereRaw('DATE(c.consultation_date) = CURDATE()')
                     ->select('c.id', 'c.complaint', 'c.consultation_date', 'u.username', 'p.first_name', 'p.last_name')
                     ->orderBy('c.consultation_date')
@@ -495,7 +495,7 @@ class DashboardQueries
                     'start' => $c->consultation_date,
                     'type' => 'consultation',
                     'color' => '#2f7bbd', // blue
-                    'url' => 'staff/consultations?edit='.$c->id,
+                    'url' => url('staff/consultations?edit='.$c->id),
                     'description' => "Chief complaint: {$c->complaint}",
                 ];
             }
@@ -503,8 +503,8 @@ class DashboardQueries
             // Pending sick leaves
             $pendingLeaves = $safeQuery(function () {
                 return DB::table('sick_leaves as sl')
-                    ->join('users u', 'u.id', '=', 'sl.user_id')
-                    ->join('profiles p', 'p.user_id', '=', 'u.id')
+                    ->join('users as u', 'u.id', '=', 'sl.user_id')
+                    ->join('profiles as p', 'p.user_id', '=', 'u.id')
                     ->where('sl.status', 'pending')
                     ->select('sl.id', 'sl.reason', 'sl.start_date', 'sl.end_date', 'sl.created_at', 'u.username', 'p.first_name', 'p.last_name')
                     ->orderBy('sl.created_at')
@@ -519,7 +519,7 @@ class DashboardQueries
                     'end' => $l->end_date ? $l->end_date.' 23:59' : null,
                     'type' => 'sick_leave',
                     'color' => '#fd7e14',
-                    'url' => 'staff/sick_leaves',
+                    'url' => url('staff/sick_leaves'),
                     'description' => "Sick leave request: {$l->reason}",
                 ];
             }
@@ -527,9 +527,9 @@ class DashboardQueries
             // Equipment due today or overdue
             $dueEquipment = $safeQuery(function () {
                 return DB::table('equipment_loans as l')
-                    ->join('equipment e', 'e.id', '=', 'l.equipment_id')
-                    ->join('users u', 'u.id', '=', 'l.user_id')
-                    ->join('profiles p', 'p.user_id', '=', 'u.id')
+                    ->join('equipment as e', 'e.id', '=', 'l.equipment_id')
+                    ->join('users as u', 'u.id', '=', 'l.user_id')
+                    ->join('profiles as p', 'p.user_id', '=', 'u.id')
                     ->where('l.status', 'borrowed')
                     ->whereRaw('l.borrowed_at <= SUBDATE(NOW(), 1)')
                     ->select('l.id', 'e.name as equipment_name', 'l.borrowed_at', 'u.username', 'p.first_name', 'p.last_name')
@@ -544,7 +544,7 @@ class DashboardQueries
                     'start' => date('Y-m-d', strtotime($e->borrowed_at)).' 00:00',
                     'type' => 'equipment_overdue',
                     'color' => '#dc3545',
-                    'url' => 'staff/equipment_loans',
+                    'url' => url('staff/equipment_loans'),
                     'description' => 'Borrowed on '.date('M d, Y', strtotime($e->borrowed_at)),
                 ];
             }
@@ -572,7 +572,7 @@ class DashboardQueries
                     'start' => date('Y-m-d').' 00:00',
                     'type' => 'low_stock',
                     'color' => '#dc3545',
-                    'url' => 'staff/inventory',
+                    'url' => url('staff/inventory'),
                     'description' => "Stock: {$m->stock} (threshold: {$m->low_stock_threshold})",
                 ];
             }
@@ -600,7 +600,7 @@ class DashboardQueries
                     'start' => $c->consultation_date,
                     'type' => 'consultation',
                     'color' => '#2f7bbd',
-                    'url' => 'user/my_consultations',
+                    'url' => url('user/my_consultations'),
                     'description' => $c->diagnosis ? 'Diagnosis: '.$c->diagnosis : 'Scheduled consultation',
                 ];
             }
@@ -609,7 +609,7 @@ class DashboardQueries
             $sickLeaves = $safeQuery(function () use ($uid) {
                 return DB::table('sick_leaves')
                     ->where('user_id', $uid)
-                    ->whereRaw('DATE(start_date) >= CURDATE() OR DATE(end_date) >= CURDATE()')
+                    ->whereRaw('(DATE(start_date) >= CURDATE() OR DATE(end_date) >= CURDATE())')
                     ->select('id', 'reason', 'start_date', 'end_date', 'status')
                     ->orderBy('start_date')
                     ->limit(5)
@@ -624,7 +624,7 @@ class DashboardQueries
                     'end' => $l->end_date ? $l->end_date.' 23:59' : null,
                     'type' => 'sick_leave',
                     'color' => $statusColor,
-                    'url' => 'user/my_requests?tab=sick-leaves',
+                    'url' => url('user/my_requests?tab=sick-leaves'),
                     'description' => "Reason: {$l->reason}",
                 ];
             }
@@ -632,7 +632,7 @@ class DashboardQueries
             // Equipment loans due/overdue
             $loans = $safeQuery(function () use ($uid) {
                 return DB::table('equipment_loans as l')
-                    ->join('equipment e', 'e.id', '=', 'l.equipment_id')
+                    ->join('equipment as e', 'e.id', '=', 'l.equipment_id')
                     ->where('l.user_id', $uid)
                     ->where('l.status', 'borrowed')
                     ->select('l.id', 'e.name as equipment_name', 'l.borrowed_at')
@@ -648,7 +648,7 @@ class DashboardQueries
                     'start' => date('Y-m-d', strtotime($l->borrowed_at.' +1 day')).' 00:00',
                     'type' => $overdue ? 'equipment_overdue' : 'equipment_due',
                     'color' => $overdue ? '#dc3545' : '#ffc107',
-                    'url' => 'user/my_requests?tab=equipment',
+                    'url' => url('user/my_requests?tab=equipment'),
                     'description' => 'Borrowed on '.date('M d, Y', strtotime($l->borrowed_at)),
                 ];
             }
@@ -656,7 +656,7 @@ class DashboardQueries
             // Upcoming dispensing / medicine requests (dispensed)
             $dispensed = $safeQuery(function () use ($uid) {
                 return DB::table('medicine_requests as r')
-                    ->join('medicines m', 'm.id', '=', 'r.medicine_id')
+                    ->join('medicines as m', 'm.id', '=', 'r.medicine_id')
                     ->where('r.user_id', $uid)
                     ->where('r.status', 'dispensed')
                     ->whereRaw('DATE(r.requested_at) >= SUBDATE(CURDATE(), 7)')
@@ -672,7 +672,7 @@ class DashboardQueries
                     'start' => $d->requested_at,
                     'type' => 'dispensed',
                     'color' => '#198754',
-                    'url' => 'user/my_requests?tab=medicine',
+                    'url' => url('user/my_requests?tab=medicine'),
                     'description' => "Qty: {$d->quantity} - {$d->reason}",
                 ];
             }

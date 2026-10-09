@@ -23,6 +23,12 @@
     while the JS still manages the max; the whitespace-only lines inside
     the toolbar match the reference byte-for-byte.
 
+    Post-migration "All" filter: the select gained an explicit All option
+    (status=all - the backend drops the status WHERE clause only, the same
+    path the legacy junk values take, while q/page/status pagination keeps
+    working) and the GET form carries an active ?q= through a hidden input
+    so switching status never drops the search.
+
     Post-migration feature 18: History pagination and overdue notifications.
 --}}
 @extends('layouts.dashboard')
@@ -33,7 +39,9 @@
 <div class="row g-3">
     <div class="col-12">
         <div class="modal fade" id="issueEquipmentModal" tabindex="-1" aria-labelledby="issueEquipmentModalLabel" aria-hidden="true">
-            <div class="modal-dialog modal-dialog-centered modal-md"><div class="modal-content"><div class="card">
+            <div class="modal-dialog modal-dialog-centered modal-md">
+                <div class="modal-content">
+                    <div class="card">
             <div class="card-header" id="issueEquipmentModalLabel">Issue Equipment</div>
             <div class="card-body">
                 @foreach ($errors as $err)
@@ -75,11 +83,26 @@
                         <label class="form-label">Notes</label>
                         <textarea name="notes" class="form-control" rows="2"></textarea>
                     </div>
-                    <button type="submit" class="btn btn-primary w-100" data-swal-add="equipment loan"><i class="bi bi-box-arrow-up me-1"></i> Issue</button>
-                </form>
+                     
+                
+                <div class="d-flex gap-2">
+    <button type="submit" class="btn btn-accent "
+        data-swal-add="equipment loan">
+        <i class="bi bi-box-arrow-up me-1"></i> Issue Equipment
+    </button>
+
+    <button type="button" class="btn btn-outline-secondary "
+        data-bs-dismiss="modal">
+        Cancel
+    </button>
+</div>
+            </form>
             </div>
+            
         </div>
-            </div></div>
+        
+            </div>
+            </div>
         </div>
     </div>
 
@@ -94,7 +117,9 @@
                     <div class="col-auto">
                         <label class="form-label">Filter</label>
                         <form method="get" class="d-inline">
+                            <input type="hidden" name="q" value="{{ request('q') }}">
                             <select name="status" class="form-select form-select-sm" onchange="this.form.submit()">
+                                <option value="all" {{ $statusFilter === 'all' ? 'selected' : '' }}>All</option>
                                 <option value="borrowed" {{ $statusFilter === 'borrowed' ? 'selected' : '' }}>Borrowed</option>
                                 <option value="returned" {{ $statusFilter === 'returned' ? 'selected' : '' }}>Returned</option>
                                 <option value="overdue" {{ $statusFilter === 'overdue' ? 'selected' : '' }}>Overdue</option>

@@ -19,6 +19,10 @@ use Illuminate\View\View;
  *  1. every $old key trimmed (lines 23-25) - password/confirm kept raw;
  *     $type collapses anything but the literal 'employee' to 'student'
  *     (line 28, account_type itself is only ever trimmed, never validated);
+ *     then the Location section's granular house_no/block/lot inputs fold
+ *     into lot_block when Lot/Block was left empty (Laravel-side addition
+ *     for the Region->Province->City->Barangay form; format_address()'s
+ *     exact 6-part composition is untouched);
  *  2. the seven field checks (lines 31-39) ALL run and accumulate in order
  *     - no early return, so one POST can show six messages at once;
  *  3. uniqueness (lines 42-48) only when the field checks passed: a single
@@ -60,7 +64,8 @@ class RegisterController extends Controller
         'username' => '', 'email' => '', 'account_type' => 'student',
         'first_name' => '', 'middle_name' => '', 'last_name' => '',
         'gender' => '', 'birthdate' => '', 'lot_block' => '', 'street' => '',
-        'barangay' => '', 'postal_code' => '', 'city_municipality' => '', 'province' => '', 'contact_no' => '',
+        'barangay' => '', 'postal_code' => '', 'city_municipality' => '', 'province' => '', 'region' => '',
+        'house_no' => '', 'block' => '', 'lot' => '', 'contact_no' => '',
         'emergency_name' => '', 'emergency_contact' => '',
         'student_no' => '', 'course' => '', 'year_level' => '', 'section' => '',
         'employee_no' => '', 'department' => '', 'position' => '',
@@ -84,6 +89,30 @@ class RegisterController extends Controller
             foreach (array_keys($old) as $key) {
                 $old[$key] = trim((string) $request->input($key, ''));
             }
+
+            // The Location section's granular inputs (House No., Block,
+            // Lot) fold into the legacy lot_block composite when the user
+            // left Lot/Block empty: each value gets its label ("House No.
+            // 12A") unless it already starts with it, and the parts join
+            // with ", " - so format_address() keeps its exact 6-part
+            // composition untouched. A directly-posted lot_block wins.
+            if ($old['lot_block'] === '') {
+                $addressParts = [];
+                foreach ([['house_no', 'House No.'], ['block', 'Block'], ['lot', 'Lot']] as [$key, $label]) {
+                    if ($old[$key] === '') {
+                        continue;
+                    }
+                    $value = $old[$key];
+                    if (stripos($value, $label) !== 0) {
+                        $value = $label.' '.$value;
+                    }
+                    $addressParts[] = $value;
+                }
+                if ($addressParts !== []) {
+                    $old['lot_block'] = implode(', ', $addressParts);
+                }
+            }
+
             $password = (string) $request->input('password', '');
             $confirm = (string) $request->input('password_confirm', '');
 

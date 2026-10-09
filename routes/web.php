@@ -15,13 +15,13 @@ use App\Http\Controllers\Api\ProcessNotificationQueueController;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\Auth\LogoutController;
 use App\Http\Controllers\Auth\RegisterController;
+use App\Http\Controllers\CalendarController;
 use App\Http\Controllers\CertificateController;
 use App\Http\Controllers\ConsultationController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\NotificationPreferencesController;
 use App\Http\Controllers\NotificationsController;
 use App\Http\Controllers\ProfileController;
-use App\Http\Controllers\Staff\DeductionLogsController;
 use App\Http\Controllers\Staff\DispenseController;
 use App\Http\Controllers\Staff\EquipmentLoansController;
 use App\Http\Controllers\Staff\InventoryController;
@@ -110,6 +110,29 @@ Route::middleware(['auth', 'role:user'])
 // like the original self-posting form (user/dashboard.php:16-45).
 Route::middleware(['auth', 'role:user'])
     ->post('/user/dashboard', [DashboardController::class, 'userSickLeave']);
+
+/*
+| Full-page Calendar - one shared action behind each role's own path.
+|
+| The Feature-10 calendar only ever shipped as the compact dashboard card
+| (layouts/partials/calendar.blade.php + assets/js/calendar.js + the
+| DashboardQueries::calendarEvents() event assembly); the sidebars' Calendar
+| links pointed at URLs no route ever defined, which is why they 404'd.
+| Same ['auth', 'role:...'] pair as the dashboards (guest -> login, wrong
+| role -> own dashboard), and the same role-scoped event source, so event
+| visibility is identical to each role's dashboard calendar.
+*/
+Route::middleware(['auth', 'role:admin'])
+    ->get('/admin/calendar', [CalendarController::class, 'index'])
+    ->name('admin.calendar');
+
+Route::middleware(['auth', 'role:staff'])
+    ->get('/staff/calendar', [CalendarController::class, 'index'])
+    ->name('staff.calendar');
+
+Route::middleware(['auth', 'role:user'])
+    ->get('/user/calendar', [CalendarController::class, 'index'])
+    ->name('user.calendar');
 
 /*
 | Phase 10: user/sick_leave.php is a compatibility stub - require_login(['user'])
@@ -252,18 +275,20 @@ Route::middleware(['auth', 'role:user'])
 
 /*
 |--------------------------------------------------------------------------
-| Inventory (Phase 15) - staff/inventory.php + staff/deduction_logs.php
+| Inventory (Phase 15) - staff/inventory.php
 |--------------------------------------------------------------------------
 |
 | The inventory page is a single self-posting endpoint: stock receiving and
 | batch delete run off POST in the original's exact order (a failed POST
-| falls through to the same GET rendering). deduction_logs.php checks no
-| request method and performs no writes, so it stays a plain GET like
-| staff/patients (Phase 6 convention). The two legacy URLs are method-blind
-| compatibility stubs - require_login, flash, redirect, in that order - so
-| both accept GET and POST and redirect through their target route with the
-| original info message (written but never rendered - write-only legacy
-| slot, see partials/flash.blade.php).
+| falls through to the same GET rendering). The two legacy URLs are
+| method-blind compatibility stubs - require_login, flash, redirect, in
+| that order - so both accept GET and POST and redirect through their
+| target route with the original info message (written but never
+| rendered - write-only legacy slot, see partials/flash.blade.php).
+|
+| Post-migration removal: staff/deduction_logs (a plain GET, no writes)
+| and its controller, view and nav entries were taken out - Transaction
+| History covers those records.
 |
 */
 
@@ -271,11 +296,6 @@ Route::middleware(['auth', 'role:user'])
 Route::middleware(['auth', 'role:staff'])
     ->match(['get', 'post'], '/staff/inventory', [InventoryController::class, 'index'])
     ->name('staff.inventory');
-
-/** staff/deduction_logs.php - OUT stock movements tied to dispense refs. */
-Route::middleware(['auth', 'role:staff'])
-    ->get('/staff/deduction_logs', [DeductionLogsController::class, 'index'])
-    ->name('staff.deduction_logs');
 
 /** staff/stock_adjust.php - stub: flash + redirect to unified inventory. */
 Route::middleware(['auth', 'role:staff'])
