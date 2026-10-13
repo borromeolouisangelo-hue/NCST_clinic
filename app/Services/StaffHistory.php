@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Queries\StockLogQueries;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
@@ -40,6 +41,102 @@ class StaffHistory
             'inventory' => ['label' => 'Inventory',       'icon' => 'bi-box-seam'],
             'equipment-loans' => ['label' => 'Equipment Loans', 'icon' => 'bi-arrow-left-right'],
         ];
+    }
+
+    /**
+     * The search/filter toolbar definition per section (field name, label,
+     * search placeholder and option map) - the single source of truth for
+     * the combined staff/history page (StaffHistoryController), which every
+     * module's View All action opens. Each section reuses exactly the
+     * filter its module page already submits, so the dropdown, the query
+     * value and the SQL can never drift apart.
+     *
+     * 'second' is optional: the Inventory section is the deduction log and
+     * carries a second dropdown (the date window) beside the Type one; the
+     * other six sections have exactly one control.
+     *
+     * @return array<string, array{field: string, label: string, placeholder: string, options: array<string, string>, second?: array{field: string, label: string, options: array<string, string>}>>
+     */
+    public static function filterControls(): array
+    {
+        return [
+            'patients' => [
+                'field' => 'type',
+                'label' => 'Filter',
+                'placeholder' => 'Search name, username, student no. or employee no...',
+                'options' => ['all' => 'All Types', 'student' => 'Student', 'employee' => 'Employee'],
+            ],
+            'consultations' => [
+                'field' => 'filter',
+                'label' => 'Date',
+                'placeholder' => 'Search patient, complaint or diagnosis...',
+                'options' => ['all' => 'All Dates', 'today' => 'Today', 'week' => 'This Week', 'month' => 'This Month'],
+            ],
+            'certificates' => [
+                'field' => 'type',
+                'label' => 'Type',
+                'placeholder' => 'Search patient, certificate no. or purpose...',
+                'options' => ['all' => 'All Types', 'medical' => 'Medical Certificate', 'excuse' => 'Excuse Slip', 'fit' => 'Fit to Work / Study'],
+            ],
+            'sick-leaves' => [
+                'field' => 'status',
+                'label' => 'Status',
+                'placeholder' => 'Search employee name or employee no...',
+                'options' => ['all' => 'All', 'pending' => 'Pending', 'approved' => 'Approved', 'rejected' => 'Declined'],
+            ],
+            'dispense' => [
+                'field' => 'history_status',
+                'label' => 'Status',
+                'placeholder' => 'Search patient, medicine or reason...',
+                'options' => ['all' => 'All Status', 'dispensed' => 'Dispensed', 'rejected' => 'Declined'],
+            ],
+            // The inventory section is the deduction log (the Inventory
+            // screen's View Deduction Logs action lands here), so it is the
+            // one section carrying TWO dropdowns: Type (which of the two
+            // stock systems the row came from) plus the date window. 'second'
+            // is optional - the other six sections keep their single control.
+            'inventory' => [
+                'field' => 'type',
+                'label' => 'Type',
+                'placeholder' => 'Search item name...',
+                'options' => ['all' => 'All Types', 'medicine' => 'Medicine', 'equipment' => 'Equipment'],
+                'second' => [
+                    'field' => 'filter',
+                    'label' => 'Date',
+                    'options' => ['all' => 'All Dates', 'today' => 'Today', 'week' => 'This Week', 'month' => 'This Month'],
+                ],
+            ],
+            'equipment-loans' => [
+                'field' => 'status',
+                'label' => 'Loan Status',
+                'placeholder' => 'Search borrower or equipment...',
+                'options' => ['all' => 'All Loans', 'borrowed' => 'Borrowed', 'returned' => 'Returned', 'overdue' => 'Overdue'],
+            ],
+        ];
+    }
+
+    /**
+     * Server-side page size per section, used by the combined
+     * staff/history pagination nav.
+     *
+     * The five module sections keep the sizes their (now folded-in) View
+     * All screens used; patients keeps a sane bound for what used to be an
+     * unbounded list, and inventory takes the deduction log's own page
+     * size so the two can never drift apart.
+     */
+    public static function perPage(string $tab): int
+    {
+        $map = [
+            'patients' => 100,
+            'consultations' => 100,
+            'certificates' => 100,
+            'sick-leaves' => 100,
+            'dispense' => 200,
+            'inventory' => StockLogQueries::PER_PAGE,
+            'equipment-loans' => 20,
+        ];
+
+        return $map[$tab] ?? 100;
     }
 
     /** Column count per section, used for the "no records" row. */
@@ -343,7 +440,7 @@ class StaffHistory
     private static function headerRow(string $tab): string
     {
         return match ($tab) {
-            'patients' => '<tr><th>#</th><th>Name</th><th>ID No.</th><th>Type</th><th>Contact</th><th>Status</th><th class="text-end">Actions</th></tr>',
+            'patients' => '<tr><th>Name</th><th>ID No.</th><th>Type</th><th>Contact</th><th>Status</th><th class="text-end">Actions</th></tr>',
             'consultations' => '<tr><th>Date</th><th>Patient</th><th>Complaint</th><th>Diagnosis</th><th class="text-end">Actions</th></tr>',
             'certificates' => '<tr><th>PATIENT NAME</th><th>SEX / AGE</th><th>CONSULT DATE</th><th>DIAGNOSIS</th><th>REQUESTOR</th><th class="text-end">ACTIONS</th></tr>',
             'sick-leaves' => '<tr><th>Employee</th><th>Department</th><th>Reason</th><th>Leave Period</th><th>Filed</th><th>Status</th><th class="text-end">Actions</th></tr>',

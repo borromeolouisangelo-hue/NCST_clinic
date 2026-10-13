@@ -115,6 +115,10 @@ class DashboardController extends Controller
             'periodTotal' => $data['periodTotal'],
             'periodChange' => $data['periodChange'],
             'lowStock' => $data['lowStock'],
+            // Medicine Expiring Soon: batches expiring within the next
+            // 7 days (inclusive), one row per batch - the Low Stock card's
+            // side-by-side partner on the dashboard.
+            'expiringSoon' => $data['expiringSoon'],
             'historySections' => $data['historySections'],
             'recent' => $data['recent'],
             'calendarEvents' => $this->dashboardQueries->calendarEvents($request),

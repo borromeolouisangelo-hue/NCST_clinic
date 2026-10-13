@@ -66,9 +66,9 @@
                         <label class="form-label">Search</label>
                         <input type="search" name="q" class="form-control form-control-sm" value="{{ $search }}" placeholder="Name or employee ID..." aria-label="Search sick leaves">
                     </div>
-                    <div class="col-auto">
+                    <div class="col-auto ">
                         <label class="form-label">Filter</label>
-                        <select name="status" class="form-select form-select-sm" onchange="this.form.submit()">
+                        <select name="status" class="form-select  form-select-sm" onchange="this.form.submit()">
                             <option value="all" {{ $statusFilter === 'all' ? 'selected' : '' }}>All</option>
                             <option value="pending" {{ $statusFilter === 'pending' ? 'selected' : '' }}>Pending</option>
                             <option value="approved" {{ $statusFilter === 'approved' ? 'selected' : '' }}>Approved</option>
@@ -77,11 +77,16 @@
                     </div>
                     <div class="col d-flex flex-wrap gap-2 justify-content-start">
                         <button class="btn btn-primary text-nowrap"><i class="bi bi-search me-1"></i> Search</button>
-                        
                     </div>
                 </form>
             </div>
         </div>
+
+                    <div class="d-flex align-items-center w-100 mb-2">
+                        <a href="{{ route('staff.history', ['tab' => 'sick-leaves']) }}" class="btn btn-sm btn-outline-primary text-nowrap ms-auto"><i class="bi bi-list-ul me-1"></i> View All</a>
+                    </div>
+
+
         <div class="card">
             <div class="table-responsive">
                 <table class="table table-hover mb-0 align-middle">

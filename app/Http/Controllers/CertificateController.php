@@ -16,8 +16,8 @@ use Illuminate\View\View;
  * user/my_certificates.php (own list + print). The staff page keeps the
  * original's single-entry order: POST issue (lines 12-38) first, then the
  * ?action=delete handler (40-45), then the patients query (47-50), the
- * ?print= fetch (53-69) and the list query (71-83) - a failed POST falls
- * through all of it and re-renders, exactly like the PHP original.
+ * certificate fetch (53-69) and the list query (71-83) - a failed POST
+ * falls through all of it and re-renders, exactly like the PHP original.
  *
  * Legacy behaviours preserved:
  *  - validation is the original's two rules in the original order
@@ -27,9 +27,9 @@ use Illuminate\View\View;
  *    gets a MED number (functions.php:720 default, never overridden);
  *  - ?action=delete is a plain GET with no ownership check: any staff
  *    member may delete any certificate (the original checks only role);
- *  - the staff ?print= fetch has no ownership check either; the user page
- *    adds `AND c.user_id = ?` exactly like the original;
- *  - ?print= that matches nothing renders the LIST branch (no 404);
+ *  - the staff certificate fetch has no ownership check either; the user
+ *    page adds `AND c.user_id = ?` exactly like the original;
+ *  - a fetch that matches nothing renders the LIST branch (no 404);
  *  - the toolbar's Filter <select> submits ?type= but the SQL never reads
  *    it - the dead filter is kept, including its selected-state logic;
  *  - "Issued Today" compares PHP wall dates (functions.php line 167), so
@@ -40,7 +40,11 @@ use Illuminate\View\View;
  * Approved differences: CSRF mismatch raises Laravel's 419 instead of the
  * original's flash+redirect (Phase 6 convention), success flashes surface
  * through the shared flash partial, and $cert/$c are stdClass objects
- * (->x) instead of PDO assoc arrays (['x']).
+ * (->x) instead of PDO assoc arrays (['x']). The staff page's ?print= +
+ * window.print() became ?view=: View replaces Print everywhere (the list,
+ * the staff history's certificates section, and the post-issue redirect
+ * land on the same certificate template), rendered read-only with no
+ * automatic print dialog. The user page keeps its own ?print= flow.
  *
  * Phase 4 (Batch 2): the issue pipeline (two validations + insert + audit
  * + Notify) and the delete + audit moved into App\Services\CertificateService,
@@ -87,7 +91,7 @@ class CertificateController extends Controller
 
             if ($result['success']) {
                 return redirect()
-                    ->route('staff.certificates', ['print' => $result['cid']])
+                    ->route('staff.certificates', ['view' => $result['cid']])
                     ->with('success', 'Certificate issued.');
             }
 
@@ -110,11 +114,11 @@ class CertificateController extends Controller
              FROM users u LEFT JOIN profiles p ON p.user_id=u.id WHERE u.role='user' ORDER BY p.first_name",
         );
 
-        // ---- Printable certificate (original lines 53-69) ----------------
+        // ---- Certificate view (?view=; original lines 53-69 read ?print=)
         // A missing row gives null (the original's false); both are falsy in
         // the template's `if ($cert)` and fall through to the list branch.
-        $printId = (int) $request->query('print', 0);
-        $cert = $printId > 0
+        $viewId = (int) $request->query('view', 0);
+        $cert = $viewId > 0
             ? DB::selectOne(
                 "SELECT c.*, CONCAT(p.first_name,' ',p.last_name) AS patient_name, p.birthdate, p.gender, p.address, p.contact_no,
                     sd.student_no, ed.employee_no,
@@ -125,11 +129,15 @@ class CertificateController extends Controller
                  LEFT JOIN employee_details ed ON ed.user_id = c.user_id
                  LEFT JOIN profiles ip ON ip.user_id = c.issued_by
                  WHERE c.id=? LIMIT 1",
-                [$printId],
+                [$viewId],
             )
             : null;
 
         // ---- List (original lines 71-83) --------------------------------
+        // Module histories feature: the module page previews the 10
+        // newest certificates; the complete, paginated list lives behind
+        // the toolbar's View All action (history() below), which also
+        // gives the toolbar's dead ?type= filter a live home.
         $search = trim((string) $request->query('q', ''));
         $sql = "SELECT c.*, CONCAT(p.first_name,' ',p.last_name) AS patient_name, p.gender, p.birthdate
                 FROM medical_certificates c
@@ -139,7 +147,7 @@ class CertificateController extends Controller
             $sql .= ' WHERE p.first_name LIKE ? OR p.last_name LIKE ? OR c.purpose LIKE ?';
             array_push($params, "%$search%", "%$search%", "%$search%");
         }
-        $sql .= ' ORDER BY c.issued_at DESC LIMIT 200';
+        $sql .= ' ORDER BY c.issued_at DESC LIMIT 10';
         $certs = DB::select($sql, $params);
 
         return view('staff.certificates', [

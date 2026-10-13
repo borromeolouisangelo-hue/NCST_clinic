@@ -1744,6 +1744,63 @@ span.chip.chip-danger,
     padding: .85rem 1.25rem;
 }
 
+/* Overview row height matching: when the line chart card stretches to its
+   sibling calendar card's height (h-100), it fills as a column and its body
+   absorbs the extra space. align-items:stretch lets the chart row fill the
+   body (the shared .chart-card rule centres it, which suits the natural
+   -height Reports page but would strand a short chart in a tall card).
+   Scoped to .h-100 so the Reports page's natural-height card renders
+   exactly as before. */
+.staff-dashboard-charts .staff-line-card.h-100 {
+    display: flex;
+    flex-direction: column;
+}
+
+.staff-dashboard-charts .staff-line-card.h-100 .card-body {
+    /* Mirrors the mini calendar's fixed height in calendar.js (380px):
+       with a DEFINITE body height, the canvas's height:100% always resolves
+       and can never fall back to its attribute aspect ratio - which, mid
+       resize, inflated the drawing (width x attrH/attrW) and dragged the
+       whole matched pair taller. Both cards are 452px tall (70+380+2 vs
+       54+396+2) at every width the columns sit side by side. Below md the
+       media query restores natural height (stacked layout). */
+    flex: 1 1 auto;
+    height: 380px;
+    align-items: stretch;
+}
+
+/* The shared .chart-card rule makes the card body a flex container, so the
+   chart row (.d-flex gap-3) is a flex item sized to its CONTENT - at 1366
+   that coincidentally equals the body width, but on wider screens it froze
+   at ~656px and stranded dead space to the right of the chart. Grow it to
+   fill the body (min-width:0 so the canvas's intrinsic width can never
+   force a floor), and the chart spans its card at every width. */
+.staff-dashboard-charts .staff-line-card.h-100 .card-body > .d-flex {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+/* The line chart fills its card box instead of floating at a fixed
+   1040x240 aspect: charts.js now sizes the backing store to the display
+   box (fitCanvasToDisplaySize), so the canvas tracks whatever height the
+   overview row resolves to - which the compact mini calendar card sets.
+   Scoped to the dashboard row, and back to aspect sizing below md where
+   the chart's card-body stacks (the row's height no longer describes the
+   canvas box there); the Reports page keeps its original rendering. */
+.staff-dashboard-charts .staff-line-card .dashboard-chart {
+    height: 100%;
+}
+
+@media (max-width: 767.98px) {
+    .staff-dashboard-charts .staff-line-card .dashboard-chart {
+        height: auto;
+    }
+
+    .staff-dashboard-charts .staff-line-card.h-100 .card-body {
+        height: auto;
+    }
+}
+
 /* Chart header legend and period sidebar (markup exists in staff/dashboard.php,
    but no rules existed, so the legend dots collapsed to 0x0 and the sidebar
    shrank to min-content and wrapped its labels). */
@@ -2936,9 +2993,9 @@ body.sidebar-menu-open {
 }
 
 .account-avatar-lg {
-    width: 96px;
-    height: 96px;
-    font-size: 2.5rem;
+    width: 72px;
+    height: 72px;
+    font-size: 2rem;
 }
 
 .account-avatar-empty {
@@ -2947,4 +3004,311 @@ body.sidebar-menu-open {
     justify-content: center;
     background: #e9ecef;
     color: #6c757d;
+}
+
+/* ------------------------------------------------------------------------
+   Profile picture cropper (Account Settings - Profile tab)
+   A square drag-to-reposition stage with a zoom slider and a circular
+   live preview of the 1:1 crop that gets uploaded.
+   ---------------------------------------------------------------------- */
+.photo-crop-stage {
+    position: relative;
+    width: min(260px, 100%);
+    aspect-ratio: 1 / 1;
+    overflow: hidden;
+    background: #f1f3f5;
+    border: 1px solid rgba(0, 0, 0, .1);
+    border-radius: .5rem;
+    cursor: grab;
+    touch-action: none;
+}
+
+.photo-crop-stage:active {
+    cursor: grabbing;
+}
+
+.photo-crop-stage img {
+    position: absolute;
+    top: 0;
+    left: 0;
+    max-width: none;
+    pointer-events: none;
+    user-select: none;
+    -webkit-user-drag: none;
+}
+
+/* Darkens everything outside the circle (clipped by the stage), so the
+   avatar region reads at a glance. */
+.photo-crop-circle {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 2px dashed rgba(255, 255, 255, .8);
+    box-shadow: 0 0 0 200vmax rgba(33, 37, 41, .45);
+    pointer-events: none;
+}
+
+.photo-crop-preview {
+    width: 72px;
+    height: 72px;
+    margin-inline: auto;
+    overflow: hidden;
+    border-radius: 50%;
+    border: 1px solid rgba(0, 0, 0, .1);
+    background: #e9ecef;
+}
+
+.photo-crop-preview canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+/* ============================================================================
+   Clinic Calendar (Feature 10 - refactored)
+   Scoped to the calendar wrapper: the dashboard mini instance and the full
+   /{role}/calendar page share these rules. FullCalendar is themed through its
+   own CSS custom properties (--fc-*), so no !important rules are needed and
+   nothing here leaks outside .clinic-calendar / .clinic-calendar-card.
+   ============================================================================ */
+
+/* Card chrome: the card stretches to a sibling's height when the dashboard
+   passes calendarClass 'h-100', and the body always fills the card. */
+.clinic-calendar-card {
+    display: flex;
+    flex-direction: column;
+}
+
+.clinic-calendar-card .card-header {
+    padding: .6rem .85rem;
+    font-size: .92rem;
+    font-weight: 600;
+}
+
+.clinic-calendar-card .clinic-calendar-body {
+    flex: 1 1 auto;
+    padding: .5rem .6rem;
+}
+
+/* Mini dashboard cards stretch (h-100) to the taller sibling in the
+   overview row. When the chart card is the taller side, centre the compact
+   calendar in the leftover body space instead of stranding it at the top;
+   the root is pinned flex:0 0 auto so it can never be squeezed below its
+   content height (no clipping, no scrollbar). No effect on the full-page
+   card or on stacked layouts where the body is content-sized. */
+.clinic-calendar-card--mini .clinic-calendar-body {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.clinic-calendar-card--mini .clinic-calendar-body > .clinic-calendar {
+    flex: 0 0 auto;
+}
+
+/* Full-page mode: the card body keeps a viewport-based MINIMUM so the page
+   always looks substantial, but the calendar itself is content-sized
+   (calendar.js uses height:'auto'), so the grid can never clip or collapse. */
+.clinic-calendar-card--full .clinic-calendar-body {
+    min-height: 60vh;
+}
+
+/* Theme FullCalendar through its variables. */
+.clinic-calendar {
+    --fc-border-color: #e4e9f0;
+    --fc-page-bg-color: transparent;
+    --fc-today-bg-color: rgba(47, 123, 189, .08);
+    --fc-highlight-color: rgba(47, 123, 189, .12);
+    --fc-neutral-bg-color: #f6f8fb;
+    --fc-list-event-hover-bg-color: #f2f6fb;
+    --fc-event-bg-color: #2f7bbd;
+    --fc-event-border-color: #2f7bbd;
+    --fc-event-text-color: #fff;
+    font-size: .85rem;
+}
+
+/* Fix Bootstrap's anchor styling bleeding into the calendar's date links
+   (blue + underlined) while keeping them clickable. */
+.clinic-calendar a {
+    color: inherit;
+    text-decoration: none;
+}
+
+/* Toolbar: wrapped, evenly spaced, aligned controls. */
+.clinic-calendar .fc-toolbar {
+    flex-wrap: wrap;
+    gap: .45rem .7rem;
+}
+
+.clinic-calendar .fc-toolbar-title {
+    font-size: 1.02rem;
+    font-weight: 700;
+    color: #2d3d54;
+}
+
+.clinic-calendar .fc-button {
+    background: #fff;
+    border: 1px solid #d5dde8;
+    color: #45566e;
+    font-size: .8rem;
+    font-weight: 500;
+    padding: .26rem .65rem;
+    border-radius: .375rem;
+    box-shadow: none;
+}
+
+.clinic-calendar .fc-button:hover {
+    background: #f2f6fb;
+    border-color: #c3cddc;
+    color: #2f4a72;
+}
+
+.clinic-calendar .fc-button:focus,
+.clinic-calendar .fc-button:not(:disabled):active {
+    box-shadow: none;
+}
+
+.clinic-calendar .fc-button:disabled {
+    opacity: .5;
+}
+
+.clinic-calendar .fc-button-primary:not(:disabled).fc-button-active,
+.clinic-calendar .fc-button-primary:not(:disabled):active {
+    background: #2f7bbd;
+    border-color: #2f7bbd;
+    color: #fff;
+    box-shadow: none;
+}
+
+/* Grid: readable weekday headings, date numbers and consistent spacing. */
+.clinic-calendar .fc-col-header-cell-cushion {
+    display: block;
+    padding: .45rem .3rem;
+    font-size: .74rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: #5b6b80;
+}
+
+.clinic-calendar .fc-daygrid-day-number {
+    display: block;
+    padding: .3rem .45rem;
+    font-size: .8rem;
+}
+
+.clinic-calendar .fc-daygrid-day.fc-today-highlight {
+    background-color: var(--fc-today-bg-color);
+}
+
+.clinic-calendar .fc-daygrid-day.fc-today-highlight .fc-daygrid-day-number {
+    font-weight: 700;
+    color: #1c5fa3;
+}
+
+.clinic-calendar .fc-daygrid-more-link {
+    font-size: .72rem;
+}
+
+/* Events: compact and consistent; per-type colors arrive inline from the
+   event payload (event colors are database-driven). */
+.clinic-calendar .fc-event {
+    border: 0;
+    border-radius: .25rem;
+    padding: 1px .35rem;
+    font-size: .74rem;
+    line-height: 1.4;
+}
+
+/* Compact dashboard instance: the mini grid stays content-sized (never
+   scrolls) but is tuned to a height budget so it can sit beside the
+   line-chart card on the staff dashboard overview row (~312px at desktop).
+   Both cards carry h-100, so whichever side is taller defines the row and
+   the other stretches to match; the rules below keep the calendar the
+   shorter side, and the card-body rule further down centres it in any
+   leftover space. Scoped to mini mode - the full Calendar page keeps its
+   roomier default sizing. */
+.clinic-calendar--mini .fc-toolbar {
+    margin-bottom: .55rem;
+}
+
+.clinic-calendar--mini .fc-toolbar-title {
+    font-size: .95rem;
+}
+
+.clinic-calendar--mini .fc-button {
+    padding: .2rem .55rem;
+    font-size: .75rem;
+}
+
+.clinic-calendar--mini .fc-daygrid-day-number {
+    padding: .1rem .3rem;
+    font-size: .74rem;
+}
+
+.clinic-calendar--mini .fc-daygrid-day-events {
+    margin: 0 .1rem;
+    padding-bottom: .1rem;
+}
+
+.clinic-calendar--mini .fc-event {
+    font-size: .66rem;
+    padding: 0 .25rem;
+    line-height: 1.35;
+}
+
+.clinic-calendar--mini .fc-daygrid-more-link {
+    font-size: .6rem;
+    padding: 0 .25rem;
+}
+
+/* Weekday header stays on one line (SUN, MON, TUE, ...) even on the narrow
+   dashboard card, with tighter padding so the header keeps its share of the
+   mini height budget. The grid itself uses the shared .clinic-calendar
+   rules above, so the mini calendar keeps the exact same design as the
+   full page; these rules only tune the compact header. */
+.clinic-calendar--mini .fc-col-header-cell-cushion {
+    white-space: nowrap;
+    padding: .3rem .2rem;
+}
+
+/* Full-page list view rows. */
+.clinic-calendar .fc-list-day-text,
+.clinic-calendar .fc-list-day-side-text {
+    font-size: .78rem;
+    font-weight: 600;
+}
+
+.clinic-calendar .fc-list-event-title {
+    font-size: .82rem;
+}
+
+.clinic-calendar .fc-list-event-dot {
+    border-width: 5px;
+}
+
+/* Small screens: centre the toolbar and keep the full calendar usable. */
+@media (max-width: 575.98px) {
+    .clinic-calendar-card--full .clinic-calendar-body {
+        min-height: 55vh;
+    }
+
+    .clinic-calendar .fc-toolbar {
+        justify-content: center;
+    }
+
+    .clinic-calendar .fc-toolbar-title {
+        width: 100%;
+        text-align: center;
+        font-size: .95rem;
+    }
+
+    .clinic-calendar .fc-button {
+        padding: .22rem .5rem;
+        font-size: .75rem;
+    }
+
+    .clinic-calendar--mini .fc-col-header-cell-cushion {
+        font-size: .66rem;
+        padding: .4rem .15rem;
+    }
 }

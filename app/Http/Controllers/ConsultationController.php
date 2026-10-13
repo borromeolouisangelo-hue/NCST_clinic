@@ -2,70 +2,40 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\ConsultationImages;
 use App\Services\ConsultationService;
 use App\Services\StaffHistory;
 use App\Support\ShellContext;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\View\View;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 /**
- * Phase 11 - Consultations.
- *
- * Ports staff/consultations.php (record + history) and
- * user/my_consultations.php (own history). The staff page keeps the
- * original's single-entry order: POST save (lines 12-43) first, then the
- * ?edit= fetch (45-51), then the ?action=delete handler (53-58), and
- * finally the list queries (61-100) - a failed POST falls through all of
- * it and re-renders, exactly like the PHP original.
- *
- * Legacy behaviours preserved:
- *  - the numeric fields read $_POST directly: a blank field stores NULL,
- *    while a key omitted entirely cast null to 0/0.0 (crafted POSTs);
- *  - ?filter is validated for the query but the <select> reads the RAW
- *    value, so an invalid filter selects no option while listing all rows;
- *  - "This Week"/"This Month" are rolling 7/30-day windows, not calendar
- *    periods (labels only);
- *  - ?action=delete is a plain GET (the original has no CSRF on it; the
- *    confirm dialog is client-side only) and any staff member may delete
- *    any consultation - no ownership check exists;
- *  - the toolbar's Search button is a client-side row filter; the server
- *    ?q= parameter is a legacy hook nothing on the page submits, but it is
- *    still honoured;
- *  - fire_event('consultation.created') has no listener (NotificationRouter
- *    registers only student_registered/employee_registered/user_login), so
- *    no notification is written on save.
- *
- * Approved differences: CSRF mismatch raises Laravel's 419 instead of the
- * original's silent flash+redirect (Phase 6 convention), and success flashes
- * ("Consultation saved." / "Consultation deleted.") surface through the
- * shared flash partial although the original never rendered set_flash().
- *
- * Phase 4 (Batch 2): the save pipeline (two validations + insert + audit +
- * Notify) and the delete + audit moved into App\Services\ConsultationService,
- * injected below - this method keeps the $numeric() request reader, the
- * queries, pagination and rendering.
+ * Consultations - port of staff/consultations.php (record + history) and
+ * user/my_consultations.php (own history); save/delete live in
+ * ConsultationService, this class parses requests and renders.
  */
 class ConsultationController extends Controller
 {
+    // #region Wiring
+
+    // Consultation mutations injected; this class only parses and renders
     public function __construct(protected ConsultationService $consultationService) {}
 
-    /**
-     * GET|POST /staff/consultations - staff/consultations.php.
-     */
+    // #endregion
+
+    // #region Staff consultations page
+
+    // Run the consultations page: save POST, ?edit fetch, GET delete, then the filtered 10-row preview
+    // <- POST fields, GET ?edit/?action=delete/?filter/?q | -> view or redirect+flash | => audit + patient Notify (ConsultationService)
     public function index(Request $request): View|RedirectResponse
     {
         $errors = [];
 
-        // ---- Save consultation (original lines 12-43): field reads stay
-        // here; the validations, insert, audit and Notify moved into
-        // App\Services\ConsultationService (Phase 4, Batch 2). ----
         if ($request->isMethod('post')) {
-            // Original lines 20-24 read $_POST[...] directly: '' => null,
-            // but a missing key evaluated null !== '' and cast to 0/0.0.
-            // ConvertEmptyStringsToNull turns '' into null, so key presence
-            // is what distinguishes the two cases here.
             $numeric = function (string $key, bool $int) use ($request) {
                 if (! $request->request->has($key)) {
                     return $int ? 0 : 0.0;
@@ -87,7 +57,32 @@ class ConsultationController extends Controller
             $treat = trim((string) $request->input('treatment', ''));
             $notes = trim((string) $request->input('notes', ''));
 
-            $result = $this->consultationService->save(
+            // Optional image attachments below the diagnosis / treatment
+            // textareas: images only (jpg/jpeg/png/webp), 5 MB ceiling -
+            // validated here on the server before anything is stored.
+            $diagImage = $request->file('diagnosis_image');
+            $treatImage = $request->file('treatment_image');
+
+            $fileErrors = Validator::make(
+                [
+                    'diagnosis_image' => $diagImage,
+                    'treatment_image' => $treatImage,
+                ],
+                [
+                    'diagnosis_image' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:'.ConsultationImages::MAX_KILOBYTES],
+                    'treatment_image' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:'.ConsultationImages::MAX_KILOBYTES],
+                ],
+                [
+                    'diagnosis_image.file' => 'Attach Diagnosis Image must be a valid image file.',
+                    'diagnosis_image.mimes' => 'Diagnosis image must be a JPG, JPEG, PNG or WEBP file.',
+                    'diagnosis_image.max' => 'Diagnosis image must not be larger than 5 MB.',
+                    'treatment_image.file' => 'Attach Treatment Image must be a valid image file.',
+                    'treatment_image.mimes' => 'Treatment image must be a JPG, JPEG, PNG or WEBP file.',
+                    'treatment_image.max' => 'Treatment image must not be larger than 5 MB.',
+                ],
+            )->errors()->all();
+
+            $result = $fileErrors === [] ? $this->consultationService->save(
                 $pid,
                 $compl,
                 $bp,
@@ -100,27 +95,24 @@ class ConsultationController extends Controller
                 $treat,
                 $notes,
                 (int) $request->user()->id,
-            );
+                $diagImage,
+                $treatImage,
+            ) : null;
 
-            if ($result['success']) {
+            if ($result !== null && $result['success']) {
                 return redirect()
                     ->route('staff.consultations')
                     ->with('success', 'Consultation saved.');
             }
 
-            $errors = $result['errors'];
+            $errors = array_merge($fileErrors, $result['errors'] ?? []);
         }
 
-        // ---- Edit fetch (original lines 45-51) ---------------------------
-        // A missing row gives null (the original's false); both are falsy
-        // everywhere the template uses them.
         $editId = (int) $request->query('edit', 0);
         $edit = $editId > 0
             ? DB::table('consultations')->where('id', $editId)->limit(1)->first()
             : null;
 
-        // ---- Delete (original lines 53-58) - a plain GET, any staff ------
-        // (delete + audit moved into App\Services\ConsultationService.)
         if ($request->query('action') === 'delete' && ($cid = (int) $request->query('id', 0)) > 0) {
             $this->consultationService->delete($cid, (int) $request->user()->id);
 
@@ -129,8 +121,6 @@ class ConsultationController extends Controller
                 ->with('success', 'Consultation deleted.');
         }
 
-        // ---- Patients for the dropdown (original lines 61-65) ------------
-        // Feature: Include student_no/employee_no for the patient combobox
         $patients = DB::select(
             "SELECT u.id, u.account_type, sd.student_no, ed.employee_no,
                     CONCAT(p.first_name,' ',p.last_name) AS full_name
@@ -144,31 +134,22 @@ class ConsultationController extends Controller
         $preselect = (int) $request->query('patient_id', 0);
         $patientId = $edit->patient_id ?? $preselect;
 
-        // ---- History using StaffHistory (replaces original manual SQL) ------------
         $search = trim((string) $request->query('q', ''));
         $filter = (string) $request->query('filter', 'all');
-        $page = max(1, (int) $request->query('page', 1));
-        $perPage = 20;
-        $offset = ($page - 1) * $perPage;
 
         $filters = [
             'q' => $search,
+            'filter' => $filter,
         ];
 
-        $result = StaffHistory::rows('consultations', $filters, $perPage, $offset);
+        // Module histories feature: the module page is a recent-activity
+        // preview - the 10 newest matches, newest first, with the toolbar
+        // (search + date filter) still narrowing them. The complete,
+        // paginated history lives behind the toolbar's View All action
+        // (history() below); ?page= is no longer read here.
+        $result = StaffHistory::rows('consultations', $filters, 10, 0);
         $list = $result['rows'];
-        $totalConsultations = $result['total'];
         $consultationError = $result['error'];
-
-        $totalPages = (int) ceil($totalConsultations / $perPage);
-        $pagination = [
-            'current' => $page,
-            'total' => max(1, $totalPages),
-            'perPage' => $perPage,
-            'totalItems' => $totalConsultations,
-            'baseUrl' => url('staff/consultations'),
-            'query' => array_filter(['q' => $search, 'filter' => $filter]),
-        ];
 
         return view('staff.consultations', [
             'shell' => ShellContext::fromUser($request->user(), activePath: 'staff/consultations'),
@@ -178,15 +159,46 @@ class ConsultationController extends Controller
             'patients' => $patients,
             'patientId' => $patientId,
             'list' => $list,
-            'pagination' => $pagination,
             'filterRaw' => $filter,
             'consultationError' => $consultationError,
         ]);
     }
 
-    /**
-     * GET /user/my_consultations - user/my_consultations.php.
-     */
+    // #endregion
+
+    // #region Consultation image attachments
+
+    // Stream ONE stored attachment image of a consultation. The files live
+    // on the private local disk and are never exposed through a public URL:
+    // staff may view any consultation's images, a patient only their own.
+    // <- route {id} (consultation) + {type} (diagnosis|treatment) | -> file response | -> 403/404
+    public function attachment(Request $request, int $id, string $type): BinaryFileResponse
+    {
+        abort_unless(in_array($type, ['diagnosis', 'treatment'], true), 404);
+
+        $consultation = DB::table('consultations')->where('id', $id)->limit(1)->first();
+        abort_if($consultation === null, 404);
+
+        $user = $request->user();
+        if ($user->role !== 'staff' && (int) $consultation->patient_id !== (int) $user->id) {
+            abort(403);
+        }
+
+        $filename = $type === 'diagnosis'
+            ? ($consultation->diagnosis_image ?? null)
+            : ($consultation->treatment_image ?? null);
+        $path = ConsultationImages::path($filename);
+        abort_if($path === null, 404);
+
+        return response()->file($path);
+    }
+
+    // #endregion
+
+    // #region Student consultation history
+
+    // List the student's own consultation history, newest first
+    // <- auth user id | -> user.my_consultations view rows
     public function myConsultations(Request $request): View
     {
         $uid = (int) $request->user()->id;
@@ -204,4 +216,6 @@ class ConsultationController extends Controller
             'list' => $list,
         ]);
     }
+
+    // #endregion
 }

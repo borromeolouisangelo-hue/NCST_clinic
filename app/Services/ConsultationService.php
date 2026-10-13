@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -27,6 +28,11 @@ use Illuminate\Support\Facades\DB;
  * Error strings, SQL text, Notify payload and call order are byte-identical
  * to the controller's originals; only $request->user()->id became the
  * injected $actor (same value, resolved once by the controller).
+ *
+ * Image attachments (feature): save() gained two optional UploadedFile
+ * parameters stored on the private disk after the insert (see
+ * ConsultationImages), and delete() removes the stored files alongside the
+ * row. Calls without files behave exactly as before.
  */
 class ConsultationService
 {
@@ -45,6 +51,8 @@ class ConsultationService
      * @param  string  $treat  trimmed treatment
      * @param  string  $notes  trimmed notes
      * @param  int  $actor  authenticated staff id ($request->user()->id)
+     * @param  UploadedFile|null  $diagImage  optional diagnosis image (validated by the controller)
+     * @param  UploadedFile|null  $treatImage  optional treatment image (validated by the controller)
      * @return array{success: bool, errors: array<int, string>}
      */
     public function save(
@@ -60,6 +68,8 @@ class ConsultationService
         string $treat,
         string $notes,
         int $actor,
+        ?UploadedFile $diagImage = null,
+        ?UploadedFile $treatImage = null,
     ): array {
         $errors = [];
 
@@ -85,6 +95,19 @@ class ConsultationService
                 'treatment' => $treat,
                 'notes' => $notes,
             ]);
+
+            // Optional image attachments (validated by the controller):
+            // stored on the PRIVATE local disk, file names recorded on the
+            // row - see ConsultationImages. A consultation without images
+            // behaves exactly as before.
+            $diagImageName = $diagImage !== null ? ConsultationImages::store($diagImage, 'diagnosis') : null;
+            $treatImageName = $treatImage !== null ? ConsultationImages::store($treatImage, 'treatment') : null;
+            if ($diagImageName !== null || $treatImageName !== null) {
+                DB::table('consultations')->where('id', $cid)->update([
+                    'diagnosis_image' => $diagImageName,
+                    'treatment_image' => $treatImageName,
+                ]);
+            }
 
             AuditLogger::log(
                 $actor,
@@ -117,10 +140,18 @@ class ConsultationService
 
     /**
      * Delete a consultation + its audit row (no ownership check, original).
+     * Any stored image attachments are removed with it.
      */
     public function delete(int $cid, int $actor): void
     {
+        $row = DB::table('consultations')->where('id', $cid)->limit(1)->first();
+
         DB::table('consultations')->where('id', $cid)->delete();
+
+        if ($row) {
+            ConsultationImages::delete($row->diagnosis_image ?? null);
+            ConsultationImages::delete($row->treatment_image ?? null);
+        }
 
         AuditLogger::log(
             $actor,

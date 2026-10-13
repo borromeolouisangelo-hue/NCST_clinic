@@ -5,6 +5,7 @@ namespace App\Queries;
 use App\Services\ClinicTrend;
 use App\Services\StaffHistory;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -21,7 +22,8 @@ use Illuminate\Support\Facades\DB;
  *
  *  - staffData(): the clinic dashboard's KPI stats, trend badges,
  *    frequently-requested/borrowed lists, 7/14/30-day trend ranges, period
- *    totals, low-stock alerts and recent-history sections. The values the
+ *    totals, low-stock alerts, the 7-day expiring-soon batch window
+ *    (Medicine Expiring Soon card) and recent-history sections. The values the
  *    page does not render ($overdue, $overdueTrend, $yesterdayRequests,
  *    $yesterdayCons, $yesterdayLoans) are still computed here because the
  *    original computes them - their queries keep running in the same
@@ -126,7 +128,7 @@ class DashboardQueries
      * Clinic (staff) dashboard data (DashboardController::staff, original
      * lines 11-113 of the port).
      *
-     * @return array{todayRequests: int, todayCons: int, activeLoans: int, pendingSickLeaves: int, loanTrend: array{pct: float|null, dir: string}, requestedItems: array<int, array>, borrowedItems: array<int, array>, trendRanges: array<string, array>, days: int, periodTotal: int, periodChange: float|int, lowStock: array<int, array>, historySections: array, recent: array}
+     * @return array{todayRequests: int, todayCons: int, activeLoans: int, pendingSickLeaves: int, loanTrend: array{pct: float|null, dir: string}, requestedItems: array<int, array>, borrowedItems: array<int, array>, trendRanges: array<string, array>, days: int, periodTotal: int, periodChange: float|int, lowStock: array<int, array>, expiringSoon: array<int, array{name: string, batch_no: string|null, quantity: int, expiry_date: string, days_left: int}>, historySections: array, recent: array}
      */
     public function staffData(): array
     {
@@ -238,6 +240,46 @@ class DashboardQueries
             ),
         );
 
+        // --- Medicine Expiring Soon (dashboard alert beside the Low Stock
+        // card): expiry is tracked PER BATCH (medicine_batches.expiry_date),
+        // so every batch whose expiry falls in the inclusive window
+        // [today, today + 7 days] becomes its own row - a medicine with
+        // several batches expiring on different dates appears once per
+        // batch. Membership mirrors the inventory/stock logic: active
+        // medicines only (m.is_active = 1) and real stock only
+        // (b.quantity > 0); NULL expiry (first-aid items never track one)
+        // and already-expired batches are excluded by the window itself.
+        // "Today" is the APPLICATION clock (config('app.timezone'),
+        // Europe/Berlin) instead of CURDATE()'s database clock, so the day
+        // count always matches the date staff actually see. ---
+        $today = today();
+        $expiringSoon = DB::table('medicine_batches as b')
+            ->select('m.name', 'b.batch_no', 'b.quantity', 'b.expiry_date')
+            ->join('medicines as m', 'm.id', '=', 'b.medicine_id')
+            ->where('m.is_active', 1)
+            ->where('b.quantity', '>', 0)
+            ->whereNotNull('b.expiry_date')
+            ->whereBetween('b.expiry_date', [
+                $today->toDateString(),
+                (clone $today)->addDays(7)->toDateString(),
+            ])
+            ->orderBy('b.expiry_date')
+            ->orderBy('m.name')
+            ->get()
+            ->map(fn ($row) => [
+                'name' => (string) $row->name,
+                'batch_no' => $row->batch_no !== null ? (string) $row->batch_no : null,
+                'quantity' => (int) $row->quantity,
+                'expiry_date' => (string) $row->expiry_date,
+                // Whole days from today to the expiry date (0 = expires
+                // today). round() absorbs any DST-induced fractional day
+                // between the two app-timezone midnights.
+                'days_left' => (int) round($today->diffInDays(
+                    Carbon::createFromFormat('Y-m-d', (string) $row->expiry_date)->startOfDay(),
+                )),
+            ])
+            ->all();
+
         // --- Recent activity: 10 newest records per history section
         // (lines 104-113) through the shared builder. ---
         $historySections = StaffHistory::tabs();
@@ -259,6 +301,7 @@ class DashboardQueries
             'periodTotal' => $periodTotal,
             'periodChange' => $periodChange,
             'lowStock' => $lowStock,
+            'expiringSoon' => $expiringSoon,
             'historySections' => $historySections,
             'recent' => $recent,
         ];
@@ -469,7 +512,11 @@ class DashboardQueries
                     'start' => date('Y-m-d').' 00:00',
                     'type' => 'low_stock',
                     'color' => '#dc3545', // danger red
-                    'url' => url('admin/medicines'),
+                    // The admin no longer has a Medicines catalog page (the
+                    // retired admin/medicines.php route), so the low-stock
+                    // event points at the approval queue instead - the one
+                    // inventory screen this role still owns.
+                    'url' => url('admin/inventory_requests'),
                     'description' => "Stock: {$m->stock} (threshold: {$m->low_stock_threshold})",
                 ];
             }

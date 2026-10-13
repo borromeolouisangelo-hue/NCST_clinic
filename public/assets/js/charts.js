@@ -142,9 +142,53 @@ function drawPieChart(canvasId, labels, data, options) {
     });
 }
 
+/** Sync a canvas backing store to its CSS display box (devicePixelRatio
+    aware). Every drawing routine in this file reads canvas.width/height, so
+    charts render crisply at whatever size the layout gives them. This
+    matters on the staff dashboard, where the overview-row chart card
+    stretches to its calendar sibling's height (both carry h-100): a fixed
+    1040x240 backing store would leave the drawing small inside the taller
+    card, while fitting lets the line chart fill its box. Canvases sized by
+    aspect-ratio CSS (height:auto) simply re-fit to the same box, so their
+    layout is unchanged. */
+function fitCanvasToDisplaySize(canvas) {
+    var rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return canvas;
+    var dpr = window.devicePixelRatio || 1;
+    var w = Math.max(1, Math.round(rect.width * dpr));
+    var h = Math.max(1, Math.round(rect.height * dpr));
+    if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+    }
+    return canvas;
+}
+
 function drawLineChart(canvasId, labels, data, options) {
     var canvas = document.getElementById(canvasId);
     if (!canvas) return;
+    fitCanvasToDisplaySize(canvas);
+
+    // Keep the drawing in step with its display box. On the staff dashboard
+    // the overview-row chart card stretches when the mini calendar beside it
+    // takes its fixed height (both cards carry h-100), and the window can
+    // resize too; a ResizeObserver re-fits and re-draws with the latest
+    // data (tracked on the canvas so period changes are respected). The
+    // short debounce lets layout settle, and the observer goes quiet once
+    // the box matches the fitted backing store. Registered once per canvas,
+    // so repeated calls (period select) do not stack observers.
+    canvas._trendArgs = { id: canvasId, labels: labels, data: data, options: options };
+    if (typeof ResizeObserver !== 'undefined' && !canvas._trendObserver) {
+        canvas._trendObserver = new ResizeObserver(function () {
+            clearTimeout(canvas._trendRedraw);
+            canvas._trendRedraw = setTimeout(function () {
+                var a = canvas._trendArgs;
+                if (a) drawLineChart(a.id, a.labels, a.data, a.options);
+            }, 50);
+        });
+        canvas._trendObserver.observe(canvas);
+    }
+
     var ctx = canvas.getContext('2d');
     data = Array.isArray(data) ? data : [];
     labels = Array.isArray(labels) ? labels : [];

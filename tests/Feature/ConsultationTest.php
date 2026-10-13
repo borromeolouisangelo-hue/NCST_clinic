@@ -4,10 +4,13 @@ namespace Tests\Feature;
 
 use App\Models\Profile;
 use App\Models\User;
+use App\Services\ConsultationImages;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 /**
@@ -91,6 +94,8 @@ class ConsultationTest extends TestCase
             $table->text('diagnosis')->nullable();
             $table->text('treatment')->nullable();
             $table->text('notes')->nullable();
+            $table->string('diagnosis_image')->nullable();
+            $table->string('treatment_image')->nullable();
             $table->timestamp('consultation_date')->useCurrent();
         });
 
@@ -140,11 +145,11 @@ class ConsultationTest extends TestCase
 
         $response->assertOk();
         $response->assertSee('Consultations');
-        // Toolbar: client-side search, filter select, reset, new button.
+        // Toolbar: client-side search, filter select, new button. The
+        // redesign drops the Reset link from the module pages' toolbars.
         $response->assertSee('id="consultationsSearch"', false);
         $response->assertSee('<option value="all" selected>', false);
         $response->assertSee('data-search-trigger="#consultationsSearch"', false);
-        $response->assertSee('>Reset</a>', false);
         $response->assertSee('New Consultation');
         // Table head + empty state.
         $response->assertSee('<th class="text-end">Actions</th>', false);
@@ -184,7 +189,7 @@ class ConsultationTest extends TestCase
         $response->assertSee(mb_strimwidth($complaint, 0, 40, '…'), false);
         $response->assertSee(mb_strimwidth($diagnosis, 0, 40, '…'), false);
         $response->assertSee('?edit='.$id, false);
-        $response->assertSee('?action=delete&id='.$id, false);
+        $response->assertSee('?action=delete&amp;id='.$id, false);
         $response->assertSee('Delete this consultation?');
         $response->assertDontSee('No consultations found.');
 
@@ -452,7 +457,12 @@ class ConsultationTest extends TestCase
         $q('zzz-nothing')->assertSee('No consultations found.');
     }
 
-    public function test_history_is_capped_at_100_rows(): void
+    /**
+     * Module histories feature: the module page is only the 10-row recent
+     * preview - the complete, paginated history lives behind the View All
+     * action at /staff/history?tab=consultations (100 records per page).
+     */
+    public function test_module_previews_10_newest_and_history_paginates_at_100(): void
     {
         $staff = $this->makeStaff();
         $juan = $this->makePatient('Juan', 'Dela Cruz', 'student');
@@ -460,9 +470,57 @@ class ConsultationTest extends TestCase
             $this->makeConsultation($juan->id, null, "Row $i");
         }
 
-        $response = $this->actingAs($staff)->get('/staff/consultations');
-        $response->assertOk();
+        // Recent preview: exactly the 10 newest rows plus the View All link.
+        $module = $this->actingAs($staff)->get('/staff/consultations')->assertOk();
+        $this->assertSame(10, substr_count($module->getContent(), '?edit='));
+        $module->assertSee(route('staff.history', ['tab' => 'consultations']));
+
+        // History: shared table markup, 100 rows per page, back link + nav.
+        $page1 = $this->actingAs($staff)->get('/staff/history?tab=consultations')->assertOk();
+        $this->assertSame(100, substr_count($page1->getContent(), '?edit='));
+        $page1->assertSee('Consultations History')
+            ->assertSee('Consultations history pagination', false);
+
+        $page2 = $this->actingAs($staff)->get('/staff/history?tab=consultations&page=2')->assertOk();
+        $this->assertSame(5, substr_count($page2->getContent(), '?edit='));
+    }
+
+    /**
+     * The history toolbar's search box and date filter must narrow the rows
+     * server-side and survive pagination: every page link carries ?q= and
+     * ?filter= forward, a junk value collapses to 'all' for both the
+     * dropdown and the query, and a search matching nothing shows the empty
+     * state instead of a blank page.
+     */
+    public function test_history_search_and_date_filter_are_preserved_across_pagination(): void
+    {
+        $staff = $this->makeStaff();
+        $juan = $this->makePatient('Juan', 'Dela Cruz', 'student');
+        for ($i = 0; $i < 105; $i++) {
+            $this->makeConsultation($juan->id, null, "Row $i");
+        }
+
+        // All 105 rows are today's: the filtered set still paginates and
+        // both filters appear in every page link.
+        $response = $this->actingAs($staff)
+            ->get('/staff/history?tab=consultations&q=Row&filter=today')
+            ->assertOk();
         $this->assertSame(100, substr_count($response->getContent(), '?edit='));
+        $response->assertSee('q=Row', false)
+            ->assertSee('filter=today', false)
+            ->assertSee('<option value="today" selected>', false);
+
+        // A junk value falls back to 'all' for both the dropdown and rows.
+        $junk = $this->actingAs($staff)->get('/staff/history?tab=consultations&filter=banana')->assertOk();
+        $this->assertSame(100, substr_count($junk->getContent(), '?edit='));
+        $junk->assertSee('<option value="all" selected>', false);
+
+        // A search matching one row narrows to that row; no match shows
+        // the shared empty state.
+        $one = $this->actingAs($staff)->get('/staff/history?tab=consultations&q=Row%20104')->assertOk();
+        $this->assertSame(1, substr_count($one->getContent(), '?edit='));
+        $this->actingAs($staff)->get('/staff/history?tab=consultations&q=zzz-nothing')->assertOk()
+            ->assertSee('No records found.');
     }
 
     // ---------------------------------------------------------------------
@@ -541,6 +599,237 @@ class ConsultationTest extends TestCase
     }
 
     // ---------------------------------------------------------------------
+    // Image attachments - diagnosis / treatment (validated upload, private
+    // disk storage, authorized viewing, cleanup on delete)
+    // ---------------------------------------------------------------------
+
+    public function test_valid_image_uploads_are_stored_on_the_private_disk_and_saved(): void
+    {
+        Storage::fake('local');
+        $staff = $this->makeStaff();
+        $juan = $this->makePatient('Juan', 'Dela Cruz', 'student');
+
+        $response = $this->actingAs($staff)->post('/staff/consultations', [
+            'patient_id' => $juan->id,
+            'complaint' => 'Rash with photo',
+            'diagnosis' => 'Contact dermatitis',
+            'treatment' => 'Topical cream',
+            'diagnosis_image' => UploadedFile::fake()->createWithContent('skin.png', $this->png(8, 8)),
+            'treatment_image' => UploadedFile::fake()->createWithContent('after.png', $this->png(8, 8)),
+        ]);
+
+        $response->assertRedirect(route('staff.consultations'));
+        $response->assertSessionHas('success', 'Consultation saved.');
+
+        $row = DB::table('consultations')->first();
+        $this->assertNotNull($row);
+        $this->assertMatchesRegularExpression('/^diagnosis_[A-Za-z0-9]{40}\.png$/', (string) $row->diagnosis_image);
+        $this->assertMatchesRegularExpression('/^treatment_[A-Za-z0-9]{40}\.png$/', (string) $row->treatment_image);
+        // Diagnosis and treatment attachments stay separate files.
+        $this->assertNotSame($row->diagnosis_image, $row->treatment_image);
+
+        // The bytes persist on the PRIVATE local disk - never under public/.
+        Storage::disk('local')->assertExists(ConsultationImages::DIRECTORY.'/'.$row->diagnosis_image);
+        Storage::disk('local')->assertExists(ConsultationImages::DIRECTORY.'/'.$row->treatment_image);
+        $this->assertFileDoesNotExist(public_path(ConsultationImages::DIRECTORY.'/'.$row->diagnosis_image));
+    }
+
+    public function test_jpeg_and_webp_uploads_are_accepted(): void
+    {
+        Storage::fake('local');
+        $staff = $this->makeStaff();
+        $juan = $this->makePatient('Juan', 'Dela Cruz', 'student');
+
+        $this->actingAs($staff)->post('/staff/consultations', [
+            'patient_id' => $juan->id,
+            'complaint' => 'Wound check',
+            'diagnosis_image' => UploadedFile::fake()->create('scan.jpg', 4, 'image/jpeg'),
+            'treatment_image' => UploadedFile::fake()->create('wound.webp', 4, 'image/webp'),
+        ])->assertRedirect(route('staff.consultations'));
+
+        $row = DB::table('consultations')->first();
+        $this->assertMatchesRegularExpression('/\.jpg$/', (string) $row->diagnosis_image);
+        $this->assertMatchesRegularExpression('/\.webp$/', (string) $row->treatment_image);
+        Storage::disk('local')->assertExists(ConsultationImages::DIRECTORY.'/'.$row->diagnosis_image);
+        Storage::disk('local')->assertExists(ConsultationImages::DIRECTORY.'/'.$row->treatment_image);
+    }
+
+    public function test_saving_without_attachments_keeps_both_columns_null(): void
+    {
+        Storage::fake('local');
+        $staff = $this->makeStaff();
+        $juan = $this->makePatient('Juan', 'Dela Cruz', 'student');
+
+        $this->actingAs($staff)->post('/staff/consultations', [
+            'patient_id' => $juan->id,
+            'complaint' => 'No photos',
+        ])->assertRedirect(route('staff.consultations'));
+
+        $row = DB::table('consultations')->first();
+        $this->assertNull($row->diagnosis_image);
+        $this->assertNull($row->treatment_image);
+        $this->assertSame([], Storage::disk('local')->allFiles(ConsultationImages::DIRECTORY));
+    }
+
+    public function test_non_image_attachment_is_rejected_without_writing_anything(): void
+    {
+        Storage::fake('local');
+        $staff = $this->makeStaff();
+        $juan = $this->makePatient('Juan', 'Dela Cruz', 'student');
+
+        $response = $this->actingAs($staff)->post('/staff/consultations', [
+            'patient_id' => $juan->id,
+            'complaint' => 'Note attached',
+            'diagnosis_image' => UploadedFile::fake()->create('notes.txt', 4, 'text/plain'),
+        ]);
+
+        $response->assertOk();
+        $response->assertSee('Diagnosis image must be a JPG, JPEG, PNG or WEBP file.');
+        $this->assertSame(0, DB::table('consultations')->count());
+        $this->assertSame([], Storage::disk('local')->allFiles(ConsultationImages::DIRECTORY));
+    }
+
+    public function test_oversized_attachment_is_rejected_with_the_size_message(): void
+    {
+        Storage::fake('local');
+        $staff = $this->makeStaff();
+        $juan = $this->makePatient('Juan', 'Dela Cruz', 'student');
+
+        $big = $this->png(8, 8).str_repeat(' ', ConsultationImages::MAX_KILOBYTES * 1024 + 1);
+        $response = $this->actingAs($staff)->post('/staff/consultations', [
+            'patient_id' => $juan->id,
+            'complaint' => 'Huge photo',
+            'treatment_image' => UploadedFile::fake()->createWithContent('huge.png', $big),
+        ]);
+
+        $response->assertOk();
+        $response->assertSee('Treatment image must not be larger than 5 MB.');
+        $this->assertSame(0, DB::table('consultations')->count());
+        $this->assertSame([], Storage::disk('local')->allFiles(ConsultationImages::DIRECTORY));
+    }
+
+    public function test_attachment_route_serves_staff_and_owner_and_blocks_everyone_else(): void
+    {
+        Storage::fake('local');
+        $staff = $this->makeStaff();
+        $juan = $this->makePatient('Juan', 'Dela Cruz', 'student');
+        $pedro = $this->makePatient('Pedro', 'Cruz', 'student');
+
+        $this->actingAs($staff)->post('/staff/consultations', [
+            'patient_id' => $juan->id,
+            'complaint' => 'With photo',
+            'diagnosis_image' => UploadedFile::fake()->createWithContent('skin.png', $this->png(8, 8)),
+        ])->assertRedirect(route('staff.consultations'));
+
+        $row = DB::table('consultations')->first();
+        $url = route('consultations.attachment', ['id' => $row->id, 'type' => 'diagnosis']);
+
+        // Staff may view any consultation's image, streamed as the image.
+        $this->actingAs($staff)->get($url)->assertOk()->assertHeader('content-type', 'image/png');
+
+        // The owning patient may view their own.
+        $this->actingAs($juan)->get($url)->assertOk()->assertHeader('content-type', 'image/png');
+
+        // Another patient may not.
+        $this->actingAs($pedro)->get($url)->assertForbidden();
+
+        // Unknown consultation, unknown type, and a type with no stored
+        // file all 404 - nothing leaks existence.
+        $this->actingAs($staff)->get(route('consultations.attachment', ['id' => 9999, 'type' => 'diagnosis']))->assertNotFound();
+        $this->actingAs($staff)->get(route('consultations.attachment', ['id' => $row->id, 'type' => 'invoice']))->assertNotFound();
+        $this->actingAs($staff)->get(route('consultations.attachment', ['id' => $row->id, 'type' => 'treatment']))->assertNotFound();
+    }
+
+    public function test_form_declares_multipart_so_browsers_actually_upload_the_files(): void
+    {
+        $staff = $this->makeStaff();
+
+        // Without enctype="multipart/form-data" real browsers silently drop
+        // file inputs from the POST (Laravel's test client bypasses enctype,
+        // so only this render assertion + the browser check catch it).
+        $this->actingAs($staff)->get('/staff/consultations')
+            ->assertOk()
+            ->assertSee('enctype="multipart/form-data"', false);
+    }
+
+    public function test_attachment_route_sends_guests_to_login(): void
+    {
+        $staff = $this->makeStaff();
+        $juan = $this->makePatient('Juan', 'Dela Cruz', 'student');
+        $id = $this->makeConsultation($juan->id, $staff->id, 'Guest probe');
+
+        // No actingAs anywhere in this test: a plain guest request must be
+        // redirected to login by the auth middleware (actingAs latches the
+        // user for every later request, so this cannot live in the test
+        // above).
+        $this->get(route('consultations.attachment', ['id' => $id, 'type' => 'diagnosis']))
+            ->assertRedirect(route('login'));
+    }
+
+    public function test_attachment_links_appear_in_staff_history_and_patient_view_only_when_present(): void
+    {
+        Storage::fake('local');
+        $staff = $this->makeStaff();
+        $juan = $this->makePatient('Juan', 'Dela Cruz', 'student');
+
+        $this->actingAs($staff)->post('/staff/consultations', [
+            'patient_id' => $juan->id,
+            'complaint' => 'With photo',
+            'diagnosis' => 'Cough',
+            'treatment' => 'Rest',
+            'diagnosis_image' => UploadedFile::fake()->createWithContent('skin.png', $this->png(8, 8)),
+            'treatment_image' => UploadedFile::fake()->createWithContent('after.png', $this->png(8, 8)),
+        ])->assertRedirect(route('staff.consultations'));
+
+        $withImages = DB::table('consultations')->first();
+        $diagUrl = route('consultations.attachment', ['id' => $withImages->id, 'type' => 'diagnosis']);
+        $treatUrl = route('consultations.attachment', ['id' => $withImages->id, 'type' => 'treatment']);
+
+        // Staff list shows both links (the history-table partial is shared
+        // with staff/history, so both pages get them).
+        $this->actingAs($staff)->get('/staff/consultations')
+            ->assertOk()
+            ->assertSee($diagUrl, false)
+            ->assertSee($treatUrl, false);
+        $this->actingAs($staff)->get('/staff/history?tab=consultations')
+            ->assertOk()
+            ->assertSee($diagUrl, false);
+
+        // The patient's own history shows them too.
+        $this->actingAs($juan)->get('/user/my_consultations')
+            ->assertOk()
+            ->assertSee('View image');
+
+        // A consultation without images renders no attachment links at all.
+        $plain = $this->makeConsultation($juan->id, $staff->id, 'Plain visit');
+        $this->actingAs($staff)->get('/staff/consultations')
+            ->assertOk()
+            ->assertDontSee(route('consultations.attachment', ['id' => $plain, 'type' => 'diagnosis']), false);
+    }
+
+    public function test_deleting_a_consultation_removes_its_stored_images(): void
+    {
+        Storage::fake('local');
+        $staff = $this->makeStaff();
+        $juan = $this->makePatient('Juan', 'Dela Cruz', 'student');
+
+        $this->actingAs($staff)->post('/staff/consultations', [
+            'patient_id' => $juan->id,
+            'complaint' => 'With photo',
+            'diagnosis_image' => UploadedFile::fake()->createWithContent('skin.png', $this->png(8, 8)),
+        ])->assertRedirect(route('staff.consultations'));
+
+        $row = DB::table('consultations')->first();
+        Storage::disk('local')->assertExists(ConsultationImages::DIRECTORY.'/'.$row->diagnosis_image);
+
+        $this->actingAs($staff)->get('/staff/consultations?action=delete&id='.$row->id)
+            ->assertRedirect(route('staff.consultations'));
+
+        $this->assertSame(0, DB::table('consultations')->count());
+        Storage::disk('local')->assertMissing(ConsultationImages::DIRECTORY.'/'.$row->diagnosis_image);
+    }
+
+    // ---------------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------------
 
@@ -591,5 +880,25 @@ class ConsultationTest extends TestCase
             'diagnosis' => $diagnosis,
             'consultation_date' => $date ?? date('Y-m-d H:i:s'),
         ]);
+    }
+
+    /**
+     * Minimal valid PNG of the given size, built without GD (the same
+     * hand-rolled header + zlib bitmap ProfileTest uses): this environment
+     * has no GD extension, so UploadedFile::fake()->image() is unavailable,
+     * while getimagesize()/finfo still see real pixels.
+     */
+    private function png(int $width, int $height): string
+    {
+        $raw = str_repeat("\x00".str_repeat("\xff\xff\xff", $width), $height);
+
+        $chunk = static function (string $type, string $data): string {
+            return pack('N', strlen($data)).$type.$data.pack('N', crc32($type.$data));
+        };
+
+        return "\x89PNG\r\n\x1a\n"
+            .$chunk('IHDR', pack('NNCCCCC', $width, $height, 8, 2, 0, 0, 0))
+            .$chunk('IDAT', gzcompress($raw))
+            .$chunk('IEND', '');
     }
 }

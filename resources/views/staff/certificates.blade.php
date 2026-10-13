@@ -1,8 +1,8 @@
 {{--
     Staff Medical Certificates - exact port of staff/certificates.php
-    (original lines 86-297): the printable certificate branch, the issue
-    modal with its two-rule validation, and the list table with the dead
-    ?type= filter kept verbatim.
+    (original lines 86-297): the read-only certificate view branch, the
+    issue modal with its two-rule validation, and the list table with the
+    dead ?type= filter kept verbatim.
 
     Approved differences: action URLs drop .php (routing convention since
     Phase 4); the form carries @csrf instead of csrf_token (Phase 6) - the
@@ -15,6 +15,10 @@
     original <?php $patientAge = ...; ?>; line 129's end-of-line echo is
     merged with line 130 on one source line (Blade would emit one newline
     too many) carrying line 130's 20sp lead between the echo and @if.
+    The original's ?print= fetch + window.print() became ?view=: the list
+    (and the staff history's certificates section) opens the SAME
+    certificate template read-only, and the browser print dialog is never
+    triggered automatically - View replaces Print everywhere.
 
     Legacy quirks kept: the Filter <select> submits ?type= that the SQL
     never reads; generate_cert_no() numbers excuse slips and fit notes as
@@ -85,12 +89,8 @@
             </footer>
         </section>
     </main>
-    <script>
-    window.addEventListener('load', function () {
-        window.print();
-    });
-    </script>
-
+    {{-- Read-only certificate view - View replaces Print: the document
+         renders on screen and never triggers the browser print dialog. --}}
 @else
 
     <div class="registry-stats row g-3 mb-4">
@@ -197,11 +197,17 @@
                             
                             <button type="button" class="btn  btn-primary text-nowrap" data-search-trigger="#certificatesSearch"><i class="bi bi-search me-1"></i> Search</button>
                             
-                            <button type="button" class="btn  btn-accent text-nowrap" data-bs-toggle="modal" data-bs-target="#certificateModal"><i class="bi bi-file-earmark-plus me-1"></i> Issue</button>
+                            <button type="button" class="btn  btn-accent text-nowrap" data-bs-toggle="modal" data-bs-target="#certificateModal"><i class="bi bi-file-earmark-plus me-1"></i> Create Certificate</button>
                         </div>
                     </div>
                  </div>
                 </div>
+
+                             <div class="d-flex align-items-center w-100 mb-2">
+                                <a href="{{ route('staff.history', ['tab' => 'certificates']) }}" class="btn btn-sm btn-outline-primary text-nowrap ms-auto"><i class="bi bi-list-ul me-1"></i> View All</a>
+                            </div>
+
+
                 <div class="table-responsive">
                     <table id="certificatesTable" class="table table-hover mb-0 align-middle">
                         <thead><tr><th>PATIENT NAME</th><th>SEX / AGE</th><th>CONSULT DATE</th><th>DIAGNOSIS</th><th>REQUESTOR</th><th>ACTIONS</th></tr></thead>
@@ -217,7 +223,7 @@
                                 <td>{{ mb_strimwidth((string) $c->purpose, 0, 30, '…') }}</td>
                                 <td>{{ $c->patient_name ?: '—' }}</td>
                                 <td class="text-end actions-cell">
-                                    <a href="{{ route('staff.certificates') }}?print={{ $c->id }}" class="btn btn-sm btn-outline-primary" title="Print certificate"><i class="bi bi-printer"></i></a>
+                                    <a href="{{ route('staff.certificates') }}?view={{ $c->id }}" class="btn btn-sm btn-outline-primary" title="View certificate"><i class="bi bi-eye"></i></a>
                                     <a href="{{ route('staff.certificates') }}?action=delete&id={{ $c->id }}" class="btn btn-sm btn-outline-danger" title="Delete certificate" data-confirm="Delete this certificate?" data-swal-delete="certificate"><i class="bi bi-trash"></i></a>
                                 </td>
                             </tr>

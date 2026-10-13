@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Profile;
 use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
@@ -150,6 +151,17 @@ class StaffDashboardTest extends TestCase
             $table->timestamp('created_at')->useCurrent();
         });
 
+        // The Inventory page's supplier filter reads this table.
+        Schema::create('suppliers', function (Blueprint $table) {
+            $table->id();
+            $table->string('name', 150);
+            $table->string('contact_person', 120)->nullable();
+            $table->string('phone', 30)->nullable();
+            $table->string('email', 120)->nullable();
+            $table->string('address', 255)->nullable();
+            $table->dateTime('created_at')->useCurrent();
+        });
+
         Schema::create('medicines', function (Blueprint $table) {
             $table->id();
             $table->string('name', 150);
@@ -251,16 +263,17 @@ class StaffDashboardTest extends TestCase
         $response->assertSee('Clinic Dashboard');
         // Requests Today = 2, Consultations Today = 1, Active Loans = 2
         // (the returned loan is excluded). Sick Leave Requests = pending count.
-        $response->assertSee('<div class="metric-value">2</div>');
-        $response->assertSee('<div class="metric-value">1</div>');
-        $response->assertSee('<div class="metric-label">Requests Today</div>');
-        $response->assertSee('<div class="metric-label">Consultations Today</div>');
-        $response->assertSee('<div class="metric-label">Active Loans</div>');
-        $response->assertSee('<div class="metric-label">Sick Leave Requests</div>');
+        $response->assertSee('<div class="metric-value">2</div>', false);
+        $response->assertSee('<div class="metric-value">1</div>', false);
+        $response->assertSee('<div class="metric-label">Requests Today</div>', false);
+        $response->assertSee('<div class="metric-label">Consultations Today</div>', false);
+        $response->assertSee('<div class="metric-label">Active Loans</div>', false);
+        $response->assertSee('<div class="metric-label">Sick Leave Requests</div>', false);
 
         // Loan trend: 2 active vs 1 in the previous period => +100%.
         $response->assertSee(
             '<span class="trend-badge trend-up"><i class="bi bi-arrow-up"></i> +100%</span>',
+            false,
         );
         // Overdue trend: yesterday's overdue window (now-48h..now-24h) is
         // empty (loan A is 3 days old, B is 5h old) => no badge at all:
@@ -273,9 +286,9 @@ class StaffDashboardTest extends TestCase
 
         // Period sidebar pre-JS seed: 3 requests in the last 7 days,
         // previous period empty => 0% arrow up.
-        $response->assertSee('<div class="period-total-value" id="periodTotalValue">3</div>');
-        $response->assertSee('<i class="bi bi-arrow-up"></i> 0%');
-        $response->assertSee('renderTrend(7)');
+        $response->assertSee('<div class="period-total-value" id="periodTotalValue">3</div>', false);
+        $response->assertSee('<i class="bi bi-arrow-up"></i> 0%', false);
+        $response->assertSee('renderTrend(7)', false);
     }
 
     public function test_period_change_shows_a_real_decrease_when_the_previous_period_had_more(): void
@@ -292,9 +305,9 @@ class StaffDashboardTest extends TestCase
 
         $response->assertOk();
         // (1 - 4) / 4 * 100 = -75 => down arrow, text-danger, abs value.
-        $response->assertSee('<div class="period-total-value" id="periodTotalValue">1</div>');
-        $response->assertSee('period-change text-danger" id="periodChange');
-        $response->assertSee('<i class="bi bi-arrow-down"></i> 50%');
+        $response->assertSee('<div class="period-total-value" id="periodTotalValue">1</div>', false);
+        $response->assertSee('period-change text-danger" id="periodChange', false);
+        $response->assertSee('<i class="bi bi-arrow-down"></i> 50%', false);
     }
 
     // ---------------------------------------------------------------------
@@ -321,12 +334,12 @@ class StaffDashboardTest extends TestCase
         $response->assertOk();
         $response->assertSee('Frequently Requested Medicines');
         $response->assertSee('Frequently Borrowed Equipment');
-        $response->assertSee('var requestedLabels = ["Ibuprofen","Paracetamol"]');
-        $response->assertSee('var requestedTotals = [5,4]');
-        $response->assertSee('var borrowedLabels  = ["Patient Monitor","Treadmill"]');
-        $response->assertSee('var borrowedTotals  = [5,3]');
+        $response->assertSee('var requestedLabels = ["Ibuprofen","Paracetamol"]', false);
+        $response->assertSee('var requestedTotals = [5,4]', false);
+        $response->assertSee('var borrowedLabels  = ["Patient Monitor","Treadmill"]', false);
+        $response->assertSee('var borrowedTotals  = [5,3]', false);
         // Trend ranges JSON is present for the period selector.
-        $response->assertSee('var ranges = {"7":{');
+        $response->assertSee('var ranges = {"7":{', false);
     }
 
     // ---------------------------------------------------------------------
@@ -365,58 +378,40 @@ class StaffDashboardTest extends TestCase
         $response = $this->actingAs($staff)->get('/staff/dashboard');
 
         $response->assertOk();
-        // Dashboard now features: KPI stat cards, charts, low-stock alerts,
-        // and FullCalendar.  The old "Recent Activity" seven-section table
-        // has been removed per the intentional UI redesign.
+        // The redesign replaces the old seven-section recent-records block
+        // with KPI stat cards, two chart cards, the compact calendar and
+        // the two inventory alert cards.
         $response->assertSee('Requests Today');
         $response->assertSee('Consultations Today');
         $response->assertSee('Active Loans');
         $response->assertSee('Sick Leave Requests');
 
-        // Low Stock Alerts section.
+        // Inventory alert cards.
         $response->assertSee('Low Stock Alerts');
+        $response->assertSee('Medicine Expiring Soon');
 
-        // Feature 10: Calendar.
-        $response->assertSee('Clinic Calendar');
+        // Feature 10: Calendar (retitled by the redesign).
+        $response->assertSee('Staff Calendar');
 
-        // Verify key KPI values exist.
-        $response->assertSee('1'); // at least one request today from seed data
-
-        // Verify chart canvas elements are present.
+        // Chart cards + their canvas elements.
+        $response->assertSee('Frequently Requested Medicines');
+        $response->assertSee('Frequently Borrowed Equipment');
         $response->assertSee('requestTrendChart');
         $response->assertSee('requestedItemsChart');
         $response->assertSee('borrowedItemsChart');
 
-        // No "Recent Patients" / "Recent Consultations" / "Recent Dispense" /
-        // "Recent Equipment Loans" strings remain on the dashboard.
-        $response->assertDontSee('Recent Patients');
-        $response->assertDontSee('Recent Consultations');
-        $response->assertDontSee('Recent Medicine Dispensing');
-        $response->assertDontSee('Recent Equipment Loans');
+        // The seven recent-record cards, their per-row sick-leave details
+        // modals and the dashboard inventory table are all gone.
+        $this->assertSame(0, substr_count($response->getContent(), 'Recent '));
+        $response->assertDontSee('histLeaveModal');
+        $response->assertDontSee('Fitness to Work');
 
-        // Patients: verify patient name patterns from seed data.
-        $response->assertSee('Patient'); // general patient reference
-
-        // No empty "colspan=5" record-found row from the old recent section.
-        $response->assertDontSee('<td colspan="5" class="text-center text-muted py-4">No records found.</td>', false);
-
-        // Row content from the current dashboard layout.
-        $response->assertSee('Fitness to Work');
-        // Old sick-leave modals from the removed Recent Activity section
-        // are no longer rendered on the dashboard.
-        $response->assertDontSee('histLeaveModal1');
-        $response->assertDontSee('data-bs-target="#histLeaveModal1"');
-        $response->assertDontSee('action="http://localhost/staff/sick_leaves"');
-        $response->assertDontSee('_token'); // @csrf no longer on dashboard
-
-        // Paracetamol may appear in low-stock or chart contexts.
+        // Medicine row content now lives on the Inventory page only; the
+        // dashboard reaches it through the low-stock card and the charts.
         $response->assertSee('Paracetamol');
-        $response->assertSee('<span class="badge bg-secondary">Medicine</span>', false);
-        $response->assertSee('Return', false); // borrowed equipment action no longer on dashboard
-        $response->assertSee('data-confirm="Mark as returned?"', false);
     }
 
-    public function test_pending_sick_leave_renders_both_review_modals_and_reviewed_rows_do_not(): void
+    public function test_sick_leave_rows_each_render_one_details_modal_with_the_review_form(): void
     {
         $staff = $this->makeStaff();
         $employee = $this->makePatient(1, 'employee');
@@ -428,13 +423,16 @@ class StaffDashboardTest extends TestCase
         $this->makeSickLeave($employee->id, 'Migraine', 'pending');
         $this->makeSickLeave($employee->id, 'Back pain', 'approved', $staff->id);
 
-        $response = $this->actingAs($staff)->get('/staff/dashboard');
+        // The redesign drops the sick-leave card from the dashboard, so the
+        // one-details-modal-per-row rows now come from the shared table
+        // partial on the history page's Sick Leaves section.
+        $response = $this->actingAs($staff)->get('/staff/history?tab=sick-leaves');
 
         $response->assertOk();
         // Feature 4: one details modal per row (no approve/reject pair),
-        // posting to the Sick Leaves page.
-        $response->assertDontSee('id="histLeaveModal1"', false);
-        $response->assertDontSee('data-bs-target="#histLeaveModal1"', false);
+        // posting to the Sick Leaves page - both rows render theirs.
+        $response->assertSee('id="histLeaveModal1"', false);
+        $response->assertSee('data-bs-target="#histLeaveModal1"', false);
         $response->assertSee('action="http://localhost/staff/sick_leaves"', false);
         $response->assertSee('_token', false); // @csrf (approved convention)
         $response->assertSee('name="status" value="approved"', false);
@@ -451,7 +449,7 @@ class StaffDashboardTest extends TestCase
         );
     }
 
-    public function test_inventory_section_renders_status_thresholds_and_expired_flags(): void
+    public function test_inventory_page_renders_status_thresholds_and_expired_flags(): void
     {
         $staff = $this->makeStaff();
 
@@ -472,7 +470,7 @@ class StaffDashboardTest extends TestCase
             'date_received' => date('Y-m-d', strtotime('-60 days')),
         ]);
 
-        // First-aid category badge.
+        // First-aid category badge, on its own tab.
         $aidCategory = DB::table('medicine_categories')->insertGetId(['name' => 'Wound Care', 'type' => 'first_aid']);
         $aid = DB::table('medicines')->insertGetId([
             'name' => 'Adhesive Bandage', 'category_id' => $aidCategory, 'unit' => 'pcs',
@@ -482,14 +480,27 @@ class StaffDashboardTest extends TestCase
             'medicine_id' => $aid, 'quantity' => 100, 'date_received' => date('Y-m-d'),
         ]);
 
-        $response = $this->actingAs($staff)->get('/staff/dashboard');
+        // The redesign drops the inventory table from the dashboard, so the
+        // status thresholds and expired flags render on the Inventory page.
+        $response = $this->actingAs($staff)->get('/staff/inventory');
 
         $response->assertOk();
         $response->assertSee('Critical Med');
-        $response->assertSee('<span class="badge bg-secondary">Expired</span>', false);
-        $response->assertSee('<span class="badge bg-secondary">First Aid / Wound Care</span>', false);
+        // The expired date carries its own flag (the d-block puts it on its
+        // own line beneath the date).
+        $response->assertSee('<span class="badge bg-secondary d-block">Expired</span>', false);
         $response->assertSee('<span class="badge bg-success">Healthy</span>', false);
-        $response->assertSee('<th class="text-end">Total Pieces</th>', false);
+        // The old Total Pieces column is gone; the batch quantity column
+        // takes its place.
+        $response->assertSee('<th class="text-end">Quantity / Stock</th>', false);
+        $response->assertDontSee('<th class="text-end">Total Pieces</th>', false);
+
+        // The first aid product lives on its own tab, carrying its category.
+        $this->actingAs($staff)->get('/staff/inventory?tab=first_aid')
+            ->assertOk()
+            ->assertSee('>Adhesive Bandage</td>', false)
+            ->assertSee('<span class="badge bg-secondary">Wound Care</span>', false)
+            ->assertDontSee('>Critical Med</td>', false);
     }
 
     // ---------------------------------------------------------------------
@@ -515,17 +526,17 @@ class StaffDashboardTest extends TestCase
         $response = $this->actingAs($staff)->get('/staff/dashboard');
 
         $response->assertOk();
-        $response->assertSee('<td>Saline Wash</td>');
-        $response->assertDontSee('<td class="text-end"><span class="badge bg-danger">9</span></td>');
-        $response->assertSee('<td class="text-end">10</td>');
+        $response->assertSee('<td>Saline Wash</td>', false);
+        $response->assertSee('<td class="text-end"><span class="badge bg-danger">9</span></td>', false);
+        $response->assertSee('<td class="text-end">10</td>', false);
         $response->assertSee('Low Stock Alerts');
-        // Feature 10: Calendar now also shows low stock items, so occurrences
-        // are: low-stock card + inventory + calendar (3).
-        // Rubbing Alcohol is not low stock (stock 50 > threshold 10), so it
-        // only appears in inventory (1), not in the calendar.
+        // The dashboard inventory card is gone, so the low-stock medicine
+        // appears only twice: in the Low Stock Alerts card and in the
+        // calendar's event payload. Rubbing Alcohol is not low stock
+        // (stock 50 > threshold 10), so it no longer appears at all.
         $content = $response->getContent();
         $this->assertSame(2, substr_count($content, 'Saline Wash'));
-        $this->assertSame(2, substr_count($content, 'Rubbing Alcohol'));
+        $this->assertSame(0, substr_count($content, 'Rubbing Alcohol'));
     }
 
     public function test_low_stock_alerts_empty_state(): void
@@ -538,7 +549,185 @@ class StaffDashboardTest extends TestCase
 
         $this->actingAs($staff)->get('/staff/dashboard')
             ->assertOk()
-            ->assertSee('<td colspan="3" class="text-center text-muted py-3">All items sufficiently stocked.</td>');
+            ->assertSee('<td colspan="3" class="text-center text-muted py-3">All items sufficiently stocked.</td>', false);
+    }
+
+    // ---------------------------------------------------------------------
+    // Medicine Expiring Soon - the 7-day batch window beside Low Stock
+    // Alerts (expiry is tracked per batch: medicine_batches.expiry_date).
+    // Window: [today, today + 7 days] inclusive; 0-3 days left = red,
+    // 4-7 days = orange; "today" is the application clock.
+    // ---------------------------------------------------------------------
+
+    public function test_medicine_expiring_soon_shares_one_row_with_low_stock_alerts(): void
+    {
+        $staff = $this->makeStaff();
+
+        $response = $this->actingAs($staff)->get('/staff/dashboard');
+
+        $response->assertOk();
+        $response->assertSee('Medicine Expiring Soon');
+        // The three required columns.
+        $response->assertSee('<th>Medicine Name</th>', false);
+        $response->assertSee('<th>Days Before Expiration</th>', false);
+        $response->assertSee('<th>Expiration Date</th>', false);
+
+        // Both alert cards sit in ONE row, each col-lg-6 h-100 so they
+        // split the row width evenly on lg+ and stack below it - the same
+        // side-by-side card pair pattern as the admin dashboard.
+        $content = $response->getContent();
+        $lowStockAt = strpos($content, 'Low Stock Alerts');
+        $expiringAt = strpos($content, 'Medicine Expiring Soon');
+        $this->assertNotFalse($lowStockAt, 'Low Stock Alerts card is missing.');
+        $this->assertNotFalse($expiringAt, 'Medicine Expiring Soon card is missing.');
+        $this->assertLessThan($expiringAt, $lowStockAt, 'The two cards must share one row, low stock first.');
+        $this->assertSame(1, preg_match(
+            '/row g-3">\s*<div class="col-12 col-lg-6 d-flex">.*Low Stock Alerts.*<div class="col-12 col-lg-6 d-flex">.*Medicine Expiring Soon/s',
+            $content,
+        ));
+    }
+
+    public function test_expiring_soon_window_includes_0_to_7_days_with_red_and_orange_statuses(): void
+    {
+        $staff = $this->makeStaff();
+
+        // One batch at every meaningful boundary of the inclusive window.
+        $this->makeExpiringBatch('Expires Today', date('Y-m-d'), 'TODAY-1');
+        $this->makeExpiringBatch('Expires Tomorrow', date('Y-m-d', strtotime('+1 day')), 'TMR-1');
+        $this->makeExpiringBatch('Expires In Three', date('Y-m-d', strtotime('+3 days')), 'THR-1');
+        $this->makeExpiringBatch('Expires In Four', date('Y-m-d', strtotime('+4 days')), 'FOR-1');
+        $this->makeExpiringBatch('Expires In Seven', date('Y-m-d', strtotime('+7 days')), 'SVN-1');
+
+        $response = $this->actingAs($staff)->get('/staff/dashboard');
+
+        $response->assertOk();
+        $card = $this->expiringSoonCard($response->getContent());
+
+        // 0-3 days left: red (act now); 4-7 days left: orange (upcoming).
+        // The remaining days are clearly highlighted in the badge label.
+        $this->assertStringContainsString('<span class="badge bg-danger">Today</span>', $card);
+        $this->assertStringContainsString('<span class="badge bg-danger">1 day</span>', $card);
+        $this->assertStringContainsString('<span class="badge bg-danger">3 days</span>', $card);
+        $this->assertStringContainsString('<span class="badge bg-orange">4 days</span>', $card);
+        $this->assertStringContainsString('<span class="badge bg-orange">7 days</span>', $card);
+
+        // Every in-window batch shows its medicine name and the exact
+        // expiration date in the dashboard's readable "M d, Y" format.
+        foreach ([
+            'Expires Today' => date('Y-m-d'),
+            'Expires Tomorrow' => date('Y-m-d', strtotime('+1 day')),
+            'Expires In Three' => date('Y-m-d', strtotime('+3 days')),
+            'Expires In Four' => date('Y-m-d', strtotime('+4 days')),
+            'Expires In Seven' => date('Y-m-d', strtotime('+7 days')),
+        ] as $name => $expiry) {
+            $this->assertStringContainsString($name, $card, $name.' must be listed.');
+            $this->assertStringContainsString(date('M d, Y', strtotime($expiry)), $card, $name.' must show its exact expiry date.');
+        }
+    }
+
+    public function test_expiring_soon_excludes_expired_out_of_window_depleted_and_inactive_stock(): void
+    {
+        $staff = $this->makeStaff();
+
+        // Already expired (yesterday): the window starts today.
+        $this->makeExpiringBatch('Expired Yesterday Med', date('Y-m-d', strtotime('-1 day')), 'EXP-1');
+        // Eight days out: the window ends today + 7 days.
+        $this->makeExpiringBatch('Beyond Window Med', date('Y-m-d', strtotime('+8 days')), 'FAR-1');
+        // In window but the batch is depleted: no real stock to dispense.
+        $this->makeExpiringBatch('Depleted Batch Med', date('Y-m-d', strtotime('+2 days')), 'EMPTY-1', 0);
+        // In window but the medicine itself is deactivated.
+        $this->makeExpiringBatch('Retired Medicine Med', date('Y-m-d', strtotime('+2 days')), 'OFF-1', 12, false);
+        // In window but no expiry is tracked (first-aid-style batch).
+        $this->makeExpiringBatch('Undated Med', null, 'NUL-1');
+        // A live in-window row proves the table renders real rows.
+        $this->makeExpiringBatch('Live Med', date('Y-m-d', strtotime('+2 days')), 'OK-1');
+
+        $response = $this->actingAs($staff)->get('/staff/dashboard');
+
+        $response->assertOk();
+        $card = $this->expiringSoonCard($response->getContent());
+
+        foreach (['Expired Yesterday Med', 'Beyond Window Med', 'Depleted Batch Med', 'Retired Medicine Med', 'Undated Med'] as $name) {
+            $this->assertStringNotContainsString($name, $card, $name.' must not appear in the 7-day window.');
+        }
+        $this->assertStringContainsString('Live Med', $card);
+        $this->assertStringNotContainsString('No medicines expiring within the next 7 days.', $card);
+    }
+
+    public function test_expiring_soon_lists_each_batch_of_the_same_medicine_separately(): void
+    {
+        $staff = $this->makeStaff();
+
+        // One medicine, three batches: two in the window on different dates
+        // (two rows, each with its own batch number and day count) and one
+        // already expired (never shown).
+        $medicine = $this->makeMedicine('Amoxicillin 500mg', 10, true);
+        DB::table('medicine_batches')->insert([
+            ['medicine_id' => $medicine, 'batch_no' => 'AMX-A', 'quantity' => 20, 'expiry_date' => date('Y-m-d', strtotime('+2 days')), 'date_received' => date('Y-m-d', strtotime('-30 days'))],
+            ['medicine_id' => $medicine, 'batch_no' => 'AMX-B', 'quantity' => 15, 'expiry_date' => date('Y-m-d', strtotime('+5 days')), 'date_received' => date('Y-m-d', strtotime('-10 days'))],
+            ['medicine_id' => $medicine, 'batch_no' => 'AMX-OLD', 'quantity' => 10, 'expiry_date' => date('Y-m-d', strtotime('-1 day')), 'date_received' => date('Y-m-d', strtotime('-60 days'))],
+        ]);
+
+        $response = $this->actingAs($staff)->get('/staff/dashboard');
+
+        $response->assertOk();
+        $card = $this->expiringSoonCard($response->getContent());
+
+        $this->assertSame(2, substr_count($card, 'Amoxicillin 500mg'), 'One row per in-window batch of the same medicine.');
+        $this->assertStringContainsString('Batch: AMX-A', $card);
+        $this->assertStringContainsString('Batch: AMX-B', $card);
+        $this->assertStringNotContainsString('AMX-OLD', $card);
+        $this->assertStringContainsString('<span class="badge bg-danger">2 days</span>', $card);
+        $this->assertStringContainsString('<span class="badge bg-orange">5 days</span>', $card);
+        $this->assertStringContainsString(date('M d, Y', strtotime('+2 days')), $card);
+        $this->assertStringContainsString(date('M d, Y', strtotime('+5 days')), $card);
+    }
+
+    public function test_expiring_soon_shows_a_clear_empty_state_when_nothing_expires_within_7_days(): void
+    {
+        $staff = $this->makeStaff();
+
+        // Only out-of-window stock: an 8-days-out batch is not enough.
+        $this->makeExpiringBatch('Long Haul Med', date('Y-m-d', strtotime('+8 days')), 'FAR-2');
+
+        $response = $this->actingAs($staff)->get('/staff/dashboard');
+
+        $response->assertOk();
+        $response->assertSee(
+            '<td colspan="3" class="text-center text-muted py-3">No medicines expiring within the next 7 days.</td>',
+            false,
+        );
+        $card = $this->expiringSoonCard($response->getContent());
+        $this->assertStringNotContainsString('Long Haul Med', $card);
+    }
+
+    public function test_expiring_soon_window_is_anchored_to_the_application_timezone_clock(): void
+    {
+        $staff = $this->makeStaff();
+
+        // 01:30 in the application timezone (Europe/Berlin,
+        // config('app.timezone')) is still the previous calendar day on a
+        // UTC/DB clock, so a non-application "today" would shift the whole
+        // window by one day. The window must anchor to the APPLICATION
+        // date (Nov 5): Nov 5 = Today, Nov 12 = 7 days, Nov 4 = expired,
+        // Nov 13 = outside.
+        $this->travelTo(Carbon::parse('2026-11-05 01:30:00'));
+
+        $this->makeExpiringBatch('On Window Start', '2026-11-05', 'TZ-0');
+        $this->makeExpiringBatch('On Window End', '2026-11-12', 'TZ-7');
+        $this->makeExpiringBatch('One Day Early', '2026-11-04', 'TZ-M1');
+        $this->makeExpiringBatch('One Day Late', '2026-11-13', 'TZ-P8');
+
+        $response = $this->actingAs($staff)->get('/staff/dashboard');
+
+        $response->assertOk();
+        $card = $this->expiringSoonCard($response->getContent());
+        $this->assertStringContainsString('<span class="badge bg-danger">Today</span>', $card);
+        $this->assertStringContainsString('<span class="badge bg-orange">7 days</span>', $card);
+        $this->assertStringContainsString('Nov 05, 2026', $card);
+        $this->assertStringContainsString('Nov 12, 2026', $card);
+        $this->assertStringNotContainsString('One Day Early', $card);
+        $this->assertStringNotContainsString('One Day Late', $card);
     }
 
     // ---------------------------------------------------------------------
@@ -554,12 +743,14 @@ class StaffDashboardTest extends TestCase
         $response = $this->actingAs($staff)->get('/staff/dashboard');
 
         $response->assertOk();
-        $response->assertSee('Clinic Calendar');
+        $response->assertSee('Staff Calendar');
         // The header button links to the full staff calendar through the
         // named route helper - one calendar, one extra link, nothing else.
-        $response->assertSee('href="'.route('staff.calendar').'" class="btn btn-sm btn-outline-primary">View All', false);
-        // The existing event source supplies the card's payload (a pending
-        // sick leave is one of the original event types).
+        $response->assertSee('href="'.route('staff.calendar').'" class="btn btn-sm btn-outline-primary">View Calendar', false);
+        // The dashboard instance is the compact mini mode (the full page
+        // keeps month/week/list); the same event source supplies its
+        // payload (a pending sick leave is one of the original event types).
+        $response->assertSee('data-mode="mini"', false);
         $response->assertSee('Sick Leave: Patient 01 (patient01)');
         // One element on the page - still exactly one FullCalendar instance.
         $this->assertSame(1, substr_count($response->getContent(), 'id="dashboardCalendar"'));
@@ -572,41 +763,16 @@ class StaffDashboardTest extends TestCase
     // ---------------------------------------------------------------------
     // Feature 11: recent-record cards -> dedicated history pages
     // ---------------------------------------------------------------------
-
-    public function test_seven_recent_cards_each_link_to_their_dedicated_page_above_the_card(): void
-    {
-        $staff = $this->makeStaff();
-
-        $response = $this->actingAs($staff)->get('/staff/dashboard');
-        $response->assertOk();
-
-        // section title => the existing dedicated page the View All button
-        // must open (route names straight from routes/web.php, no new ones).
-        $destinations = [
-            'Recent Patients' => route('staff.patients'),
-            'Recent Consultations' => route('staff.consultations'),
-            'Recent Certificates' => route('staff.certificates'),
-            'Recent Sick Leaves' => route('staff.sick_leaves'),
-            'Recent Dispense' => route('staff.dispense'),
-            'Recent Inventory' => route('staff.inventory'),
-            'Recent Equipment Loans' => route('staff.equipment_loans'),
-        ];
-
-        $content = $response->getContent();
-        foreach ($destinations as $title => $url) {
-            $response->assertSee($title);
-
-            // The button sits outside and above the card: mb-2 spacing (the
-            // in-header pattern has no margin class) and it renders before
-            // the card title it belongs to.
-            $buttonAt = strpos($content, 'href="'.$url.'" class="btn btn-sm btn-outline-primary mb-2">');
-            $titleAt = strpos($content, $title);
-
-            $this->assertNotFalse($buttonAt, $title.' card has no above-the-card View All button.');
-            $this->assertNotFalse($titleAt, $title.' card is missing.');
-            $this->assertLessThan($titleAt, $buttonAt, 'View All must sit above the card, not inside it.');
-        }
-    }
+    //
+    // test_seven_recent_cards_each_link_to_their_dedicated_page_above_the_card
+    // was removed here: the redesign replaces all seven recent-record cards
+    // with the two "Frequently ..." chart cards, so there are no per-section
+    // titles or above-the-card View All buttons left to assert. Their
+    // absence is covered by
+    // test_all_seven_history_sections_render_with_limit_and_empty_state
+    // (which asserts zero "Recent " occurrences), and the surviving links to
+    // dedicated pages are covered by
+    // test_dashboard_calendar_header_view_all_opens_the_full_calendar.
 
     // ---------------------------------------------------------------------
     // Helpers
@@ -700,6 +866,42 @@ class StaffDashboardTest extends TestCase
             'low_stock_threshold' => $threshold,
             'is_active' => $active ? 1 : 0,
         ]);
+    }
+
+    /**
+     * Seed one active (by default) medicine with a single expiring batch.
+     * Stock (12) sits above the low-stock threshold (10) so the medicine
+     * cannot leak into the Low Stock Alerts card during assertions.
+     */
+    private function makeExpiringBatch(
+        string $medicineName,
+        ?string $expiryDate,
+        string $batchNo,
+        int $quantity = 12,
+        bool $active = true,
+    ): int {
+        $medicine = $this->makeMedicine($medicineName, 10, $active);
+
+        return DB::table('medicine_batches')->insertGetId([
+            'medicine_id' => $medicine,
+            'batch_no' => $batchNo,
+            'quantity' => $quantity,
+            'expiry_date' => $expiryDate,
+            'date_received' => date('Y-m-d', strtotime('-30 days')),
+        ]);
+    }
+
+    /**
+     * The rendered Medicine Expiring Soon card (its header to the end of
+     * the document - the dashboard's last content card), so row assertions
+     * cannot be satisfied by another section's markup.
+     */
+    private function expiringSoonCard(string $content): string
+    {
+        $start = strpos($content, 'Medicine Expiring Soon');
+        $this->assertNotFalse($start, 'Medicine Expiring Soon card is missing.');
+
+        return substr($content, $start);
     }
 
     private function makeEquipment(string $name): int

@@ -28,7 +28,7 @@
 @section('title', $title)
 
 @section('content')
-<div class="alert alert-info">This page combines your medicine requests, equipment loans, consultation history, and sick leave history into one activity overview.</div>
+<div class="alert alert-info">This page combines your medicine requests, equipment loans, consultation history, and sick leave history into one activity overview. Medicine requests follow a one-request-per-tablet-or-capsule-medicine-per-day limit: other eligible medicines may be requested separately, and first-aid supplies and other non-tablet/capsule items are not subject to this restriction.</div>
 
 <ul class="nav nav-pills mb-3" aria-label="Activity sections">
     <li class="nav-item">

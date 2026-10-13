@@ -18,6 +18,12 @@
     Client-side bits (data-live-filter, data-search-trigger, data-confirm,
     the SweetAlert handlers and the reset-on-hide script) come from the
     shared main.js/style.css assets both apps serve.
+
+    Image attachments (feature): below the Diagnosis and Treatment
+    textareas sit one file input each (jpg/jpeg/png/webp, 5 MB), with a
+    filename + small aspect-preserving preview and immediate client-side
+    checks; the server re-validates and stores the files on the PRIVATE
+    local disk (see ConsultationImages), never under public/.
 --}}
 
 @extends('layouts.dashboard')
@@ -36,7 +42,7 @@
                         @foreach ($errors as $err)
                             <div class="alert alert-danger py-2">{{ $err }}</div>
                         @endforeach
-                        <form method="post">
+                        <form method="post" enctype="multipart/form-data">
                             <div class="mb-3">
                                 <label class="form-label">Patient *</label>
                                 <input type="search" class="form-control" data-patient-combobox="#consultationPatientId" list="consultationPatientSuggestions" autocomplete="off" placeholder="Search patient name or ID..." aria-label="Search patient" required>
@@ -63,10 +69,22 @@
                             <div class="mb-3">
                                 <label class="form-label">Diagnosis</label>
                                 <textarea name="diagnosis" class="form-control" rows="2">{{ $edit->diagnosis ?? '' }}</textarea>
+                                <label class="form-label small mt-1 mb-0" for="diagnosisImage">Attach Diagnosis Image <span class="text-muted fw-normal">(JPG, JPEG, PNG or WEBP - max 5 MB)</span></label>
+                                <input type="file" class="form-control form-control-sm consultation-image-input" id="diagnosisImage" name="diagnosis_image" accept="image/jpeg,image/png,image/webp">
+                                <div class="consultation-image-preview mt-1 d-none" style="max-width: 220px;">
+                                    <div class="small text-muted text-truncate"></div>
+                                    <img alt="Diagnosis image preview" style="max-width: 100%; height: auto; max-height: 120px;">
+                                </div>
                             </div>
                             <div class="mb-3">
                                 <label class="form-label">Treatment</label>
                                 <textarea name="treatment" class="form-control" rows="2">{{ $edit->treatment ?? '' }}</textarea>
+                                <label class="form-label small mt-1 mb-0" for="treatmentImage">Attach Treatment Image <span class="text-muted fw-normal">(JPG, JPEG, PNG or WEBP - max 5 MB)</span></label>
+                                <input type="file" class="form-control form-control-sm consultation-image-input" id="treatmentImage" name="treatment_image" accept="image/jpeg,image/png,image/webp">
+                                <div class="consultation-image-preview mt-1 d-none" style="max-width: 220px;">
+                                    <div class="small text-muted text-truncate"></div>
+                                    <img alt="Treatment image preview" style="max-width: 100%; height: auto; max-height: 120px;">
+                                </div>
                             </div>
                             <div class="mb-3">
                                 <label class="form-label">Notes</label>
@@ -110,43 +128,27 @@
                         
                         <button type="button" class="btn btn-sm btn-primary text-nowrap" data-search-trigger="#consultationsSearch"><i class="bi bi-search me-1"></i> Search</button>
                         
-                        <button type="button" class="btn btn-sm btn-accent text-nowrap" data-bs-toggle="modal" data-bs-target="#consultationModal"><i class="bi bi-plus-lg me-1"></i> New Consultation</button>
+                        <button type="button" class="btn btn-sm btn-accent text-nowrap" data-bs-toggle="modal" data-bs-target="#consultationModal"><i class="bi bi-plus-lg me-1"></i>Consultation</button>
                     </div>
                 </div>
-                
             </div>
         </div>
+               
+                    <div class="d-flex align-items-center w-100 mb-2">
+                        <a href="{{ route('staff.history', ['tab' => 'consultations']) }}"
+                        class="btn btn-sm btn-outline-primary text-nowrap ms-auto">
+                        <i class="bi bi-list-ul me-1"></i> View All
+                        </a>
+                    </div>
+                
+                    
+
         <div class="card">
             <div class="table-responsive">
-                {!! \App\Services\StaffHistory::table('consultations', $list, 'consultationTable') !!}
+                {!! \App\Services\StaffHistory::table('consultations', $list, 'consultationTable', 'No consultations found.') !!}
             </div>
         </div>
 
-    @if (($pagination['total'] ?? 0) > 1)
-    <nav aria-label="Consultation pagination" class="mt-3">
-        <ul class="pagination justify-content-center">
-            @if ($pagination['current'] > 1)
-                <li class="page-item">
-                    <a class="page-link" href="{{ $pagination['baseUrl'] }}?{{ http_build_query(array_merge($pagination['query'], ['page' => $pagination['current'] - 1])) }}" aria-label="Previous">
-                        <i class="bi bi-chevron-left"></i>
-                    </a>
-                </li>
-            @endif
-            @for ($i = max(1, $pagination['current'] - 2); $i <= min($pagination['total'], $pagination['current'] + 2); $i++)
-                <li class="page-item {{ $i === $pagination['current'] ? 'active' : '' }}">
-                    <a class="page-link" href="{{ $pagination['baseUrl'] }}?{{ http_build_query(array_merge($pagination['query'], ['page' => $i])) }}">{{ $i }}</a>
-                </li>
-            @endfor
-            @if ($pagination['current'] < $pagination['total'])
-                <li class="page-item">
-                    <a class="page-link" href="{{ $pagination['baseUrl'] }}?{{ http_build_query(array_merge($pagination['query'], ['page' => $pagination['current'] + 1])) }}" aria-label="Next">
-                        <i class="bi bi-chevron-right"></i>
-                    </a>
-                </li>
-            @endif
-        </ul>
-    </nav>
-    @endif
 </div>
 </div>
 </div>
@@ -155,9 +157,66 @@
 document.addEventListener('DOMContentLoaded', function () {
     var modal = document.getElementById('consultationModal');
     if (!modal) return;
+
+    // Consultation image attachments: client-side mirror of the server
+    // rules (jpg/jpeg/png/webp only, 5 MB ceiling) plus the chosen file's
+    // name and a small aspect-ratio-preserving preview. The server
+    // re-validates on POST - this only gives immediate feedback.
+    var MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+    var ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
+    function clearPreview(input) {
+        var wrap = input.parentElement.querySelector('.consultation-image-preview');
+        if (!wrap) return null;
+        var img = wrap.querySelector('img');
+        if (img && img.dataset.objectUrl === '1') {
+            URL.revokeObjectURL(img.getAttribute('src'));
+            img.removeAttribute('src');
+            delete img.dataset.objectUrl;
+        }
+        var name = wrap.querySelector('div');
+        if (name) name.textContent = '';
+        wrap.classList.add('d-none');
+        return wrap;
+    }
+
+    modal.querySelectorAll('.consultation-image-input').forEach(function (input) {
+        input.addEventListener('change', function () {
+            clearPreview(input);
+            var file = input.files && input.files[0];
+            if (!file) return;
+
+            var problem = '';
+            if (ALLOWED_IMAGE_TYPES.indexOf(file.type) === -1) {
+                problem = 'Only JPG, JPEG, PNG or WEBP images are allowed.';
+            } else if (file.size > MAX_IMAGE_BYTES) {
+                problem = 'Image must not be larger than 5 MB.';
+            }
+            if (problem) {
+                input.value = '';
+                if (window.Swal) {
+                    Swal.fire({ icon: 'warning', title: 'Invalid image', text: problem });
+                } else {
+                    alert(problem);
+                }
+                return;
+            }
+
+            var wrap = clearPreview(input);
+            if (!wrap) return;
+            var img = wrap.querySelector('img');
+            var name = wrap.querySelector('div');
+            img.src = URL.createObjectURL(file);
+            img.dataset.objectUrl = '1';
+            name.textContent = file.name;
+            wrap.classList.remove('d-none');
+        });
+    });
+
     modal.addEventListener('hidden.bs.modal', function () {
         var form = modal.querySelector('form');
         if (form) form.reset();
+        modal.querySelectorAll('.consultation-image-input').forEach(clearPreview);
     });
 });
 </script>

@@ -126,8 +126,10 @@ class CalendarTest extends TestCase
             $response->assertOk();
             $response->assertSee('Clinic Calendar');
             // Full-page mode: the card renders even with zero events and
-            // still shows the event count.
+            // still shows the event count, and the calendar element carries
+            // the full-mode marker (month/week/list + prev/next/today).
             $response->assertSee('0 events');
+            $response->assertSee('data-mode="full"', false);
             // The layout ships the shared calendar.js that initializes the
             // partial's single element.
             $response->assertSee('assets/js/calendar.js');

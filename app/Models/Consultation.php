@@ -58,6 +58,8 @@ class Consultation extends Model
         'diagnosis',
         'treatment',
         'notes',
+        'diagnosis_image',
+        'treatment_image',
         'consultation_date',
     ];
 

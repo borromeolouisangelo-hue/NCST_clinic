@@ -15,8 +15,9 @@ use Illuminate\View\View;
  *
  * Ports staff/sick_leaves.php: the do=review POST dispatch (original lines
  * 16-36), the search/filter builder (12-13, 38-51), the list query with its
- * four LEFT JOINs and LIMIT 100 (53-66) and the three global summary counts
- * (69-71).
+ * four LEFT JOINs and its LIMIT (53-66; the module histories feature
+ * previews the 10 newest - the original LIMIT 100 moved to the paginated
+ * history() below) and the three global summary counts (69-71).
  *
  * Legacy behaviours preserved:
  *  - the dispatch reads the POST body only (the original reads $_POST), so
@@ -121,6 +122,10 @@ class SickLeaveController extends Controller
         }
 
         // ---- List (original lines 53-66) ---------------------------------
+        // Module histories feature: the queue previews the 10 newest
+        // requests (the original's LIMIT 100 moved to the paginated
+        // history() below); search and the status filter keep narrowing
+        // the preview exactly like before.
         $leaves = DB::select(
             "SELECT sl.*, CONCAT(p.first_name, ' ', p.last_name) AS employee_name,
                     ed.department, ed.position, ed.employee_no,
@@ -131,7 +136,7 @@ class SickLeaveController extends Controller
              LEFT JOIN profiles rp ON rp.user_id = sl.reviewed_by
              $where
              ORDER BY sl.created_at DESC
-             LIMIT 100",
+             LIMIT 10",
             $params,
         );
 

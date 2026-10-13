@@ -29,17 +29,14 @@
 
 
             <div class="nav-section">Inventory</div>
-            <a href="{{ url('admin/medicines') }}" class="nav-link {{ request()->is('admin/medicines') ? 'active' : '' }}">
-                <i class="bi bi-capsule"></i> Medicines
-            </a>
-            <a href="{{ url('admin/categories') }}" class="nav-link {{ request()->is('admin/categories') ? 'active' : '' }}">
-                <i class="bi bi-tags"></i> Categories
-            </a>
-            <a href="{{ url('admin/suppliers') }}" class="nav-link {{ request()->is('admin/suppliers') ? 'active' : '' }}">
-                <i class="bi bi-truck"></i> Suppliers
-            </a>
-            <a href="{{ url('admin/equipment') }}" class="nav-link {{ request()->is('admin/equipment') ? 'active' : '' }}">
-                <i class="bi bi-tools"></i> Equipment Catalog
+            {{-- Staff own every inventory record: they stock the existing
+                 items from the staff Inventory page and submit a REQUEST for
+                 anything new (medicine / first aid item, equipment, category,
+                 supplier). This queue is where those requests are approved or
+                 declined - the retired Medicines / Categories / Suppliers /
+                 Equipment Catalog admin pages no longer have routes. --}}
+            <a href="{{ url('admin/inventory_requests') }}" class="nav-link {{ request()->is('admin/inventory_requests') ? 'active' : '' }}">
+                <i class="bi bi-inbox"></i> Inventory Requests
             </a>
 
             <div class="nav-section">Records</div>

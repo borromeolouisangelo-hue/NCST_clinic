@@ -278,51 +278,53 @@ class SearchFilterTest extends TestCase
     public function test_inventory_search_also_matches_the_category_name(): void
     {
         $staff = $this->makeStaff();
-        $woundCat = DB::table('medicine_categories')->insertGetId(['name' => 'Wound Care', 'type' => 'first_aid']);
-        $this->makeMedicine('Bandage Roll', ['unit' => 'roll', 'category_id' => $woundCat]);
-        $this->makeMedicine('Ibuprofen', ['unit' => 'tablet']);
+        $painCat = DB::table('medicine_categories')->insertGetId(['name' => 'Pain Relievers', 'type' => 'medicine']);
+        $this->makeMedicine('Ibuprofen', ['unit' => 'tablet', 'category_id' => $painCat]);
+        $this->makeMedicine('Bandage Roll', ['unit' => 'roll']);
 
-        // The placeholder promises "Name or category...".
-        $this->actingAs($staff)->get('/staff/inventory?q=wound')
+        // The placeholder promises "Name or category..."; the CATEGORY name
+        // matches even though the item name does not. Both live on the
+        // medicines tab, which is the default.
+        $this->actingAs($staff)->get('/staff/inventory?q=relievers')
             ->assertOk()
-            ->assertSee('Bandage Roll <small', false)
-            ->assertDontSee('>Ibuprofen</td>', false);
+            ->assertSee('>Ibuprofen</td>', false)
+            ->assertDontSee('>Bandage Roll</td>', false);
 
-        $this->actingAs($staff)->get('/staff/inventory?q=bandage')
+        $this->actingAs($staff)->get('/staff/inventory?q=ibuprofen')
             ->assertOk()
-            ->assertSee('Bandage Roll <small', false)
-            ->assertDontSee('>Ibuprofen</td>', false);
+            ->assertSee('>Ibuprofen</td>', false)
+            ->assertDontSee('>Bandage Roll</td>', false);
     }
 
-    public function test_inventory_search_composes_with_the_item_type_and_category_filters(): void
+    public function test_inventory_search_composes_with_the_tab_and_category_filters(): void
     {
         $staff = $this->makeStaff();
         $woundCat = DB::table('medicine_categories')->insertGetId(['name' => 'Wound Care', 'type' => 'first_aid']);
         $this->makeMedicine('Bandage Roll', ['unit' => 'roll', 'category_id' => $woundCat]);
         $this->makeMedicine('Ibuprofen', ['unit' => 'tablet']);
 
-        // q matches, item_type rejects -> no rows (AND semantics).
-        $this->actingAs($staff)->get('/staff/inventory?q=bandage&item_type=medicine')
+        // q matches but the tab rejects it -> no rows (AND semantics).
+        $this->actingAs($staff)->get('/staff/inventory?tab=medicines&q=bandage')
             ->assertOk()
             ->assertSee('No products found.')
-            ->assertDontSee('Bandage Roll <small', false);
+            ->assertDontSee('>Bandage Roll</td>', false);
 
-        // q matches and item_type keeps it.
-        $this->actingAs($staff)->get('/staff/inventory?q=bandage&item_type=first_aid')
+        // q matches and the tab keeps it.
+        $this->actingAs($staff)->get('/staff/inventory?tab=first_aid&q=bandage')
             ->assertOk()
-            ->assertSee('Bandage Roll <small', false)
+            ->assertSee('>Bandage Roll</td>', false)
             ->assertDontSee('>Ibuprofen</td>', false);
 
         // q matches but the category filter rejects it.
-        $this->actingAs($staff)->get('/staff/inventory?q=ibup&category='.$woundCat)
+        $this->actingAs($staff)->get('/staff/inventory?tab=first_aid&q=ibup&category='.$woundCat)
             ->assertOk()
             ->assertSee('No products found.')
             ->assertDontSee('>Ibuprofen</td>', false);
 
         // q + category together keep the row.
-        $this->actingAs($staff)->get('/staff/inventory?q=bandage&category='.$woundCat)
+        $this->actingAs($staff)->get('/staff/inventory?tab=first_aid&q=bandage&category='.$woundCat)
             ->assertOk()
-            ->assertSee('Bandage Roll <small', false);
+            ->assertSee('>Bandage Roll</td>', false);
     }
 
     // ---------------------------------------------------------------------
@@ -403,20 +405,22 @@ class SearchFilterTest extends TestCase
         $shears = $this->makeMedicine('Trauma Shears', ['unit' => 'piece']);
         $this->makeBatch($shears, 6);
 
-        // Quantitative: package position ("deducted"), unchanged by ?q=.
+        // Quantitative: package position ("deducted"), unchanged by ?q=. It
+        // now renders under Quantity / Stock rather than in a Total Pieces
+        // column, so it is a small sub-line instead of a badge.
         $this->actingAs($staff)->get('/staff/inventory?q=biogesic')
             ->assertOk()
-            ->assertSee('>11/12 deducted</span>', false);
+            ->assertSee('>11/12 deducted</small>', false);
 
         // Non-quantitative: opened ratio, unchanged by ?q=.
         $this->actingAs($staff)->get('/staff/inventory?q=burn')
             ->assertOk()
-            ->assertSee('>0/16 opened</span>', false);
+            ->assertSee('>0/16 opened</small>', false);
 
         // No known package: plain count, unchanged by ?q=.
         $this->actingAs($staff)->get('/staff/inventory?q=shears')
             ->assertOk()
-            ->assertSee('>6</span>', false);
+            ->assertSee('>6</small>', false);
     }
 
     // ---------------------------------------------------------------------

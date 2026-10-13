@@ -14,14 +14,16 @@ use Tests\TestCase;
  * Phase 14 walk-in dispensing tests against the isolated in-memory SQLite
  * connection that phpunit.xml selects.
  *
- * Covers staff/dispense.php: the five-rule validation order (original lines
- * 37-45), the allergy conflict -> decision screen (47-55) with its zero-write
- * invariant, the 24h duplicate guard (57-59), the stock check (61-64), the
- * medicine_requests + deduct_stock_trace + dispense_logs transaction (66-90)
- * with its allergy override remark and audit actions, the ?user_id= GET
- * preselect vs POST-only medicine_id (12-13), the history filter whitelist
- * (120-130) with its invalid->all reset (unlike sick_leaves' dead filter, the
- * reset ALSO re-selects 'all'), and the LIMIT 200 history (140).
+ * Covers staff/dispense.php: the validation order (original lines
+ * 37-45, plus the per-medicine daily limit that replaced the legacy 24h
+ * duplicate guard), the allergy conflict -> decision screen (47-55) with
+ * its zero-write invariant, the stock check (61-64), the
+ * medicine_requests + deduct_stock_trace + dispense_logs transaction
+ * (66-90) with its allergy override remark and audit actions, the
+ * ?user_id= GET preselect vs POST-only medicine_id (12-13), the history
+ * filter whitelist (120-130) with its invalid->all reset (unlike
+ * sick_leaves' dead filter, the reset ALSO re-selects 'all'), and the
+ * LIMIT 200 history (140).
  *
  * It also covers the two Phase 14 compatibility stubs
  * (staff/medicine_requests.php, user/request_medicine.php): no method check,
@@ -263,7 +265,7 @@ class DispenseTest extends TestCase
         // ?medicine_id= on a GET must NOT preselect (POST-only input).
         $this->actingAs($staff)->get('/staff/dispense?medicine_id='.$m)
             ->assertOk()
-            ->assertSee('<option value="'.$m.'" data-stock="7" data-limit="10" >', false);
+            ->assertSee('<option value="'.$m.'" data-stock="7" data-limit="10" data-requested-today="0" >', false);
     }
 
     public function test_history_filter_whitelist_and_invalid_value_resets_to_all(): void
@@ -291,10 +293,10 @@ class DispenseTest extends TestCase
         // dead filter, the whitelist RESET means 'all' renders as selected.
         $dead = $this->actingAs($staff)->get('/staff/dispense?history_status=banana');
         $dead->assertSee('Fever note')->assertSee('Refused note')
-            ->assertSee('<option value="all" selected>All Status</option>', false);
+            ->assertSee('<option value="all" selected>All</option>', false);
 
         $none = $this->actingAs($staff)->get('/staff/dispense');
-        $none->assertSee('<option value="all" selected>All Status</option>', false);
+        $none->assertSee('<option value="all" selected>All</option>', false);
     }
 
     public function test_history_rows_render_details_badges_and_trailing_dash_fallbacks(): void
@@ -328,7 +330,13 @@ class DispenseTest extends TestCase
             ->assertDontSee('No medicine history in this view.');
     }
 
-    public function test_history_is_capped_at_200_rows(): void
+    /**
+     * Module histories feature: the module page previews the 10 newest
+     * dispense rows - the complete history sits behind View All at
+     * /staff/history?tab=dispense, paginated at the module's historical page
+     * size of 200 records.
+     */
+    public function test_module_previews_10_newest_and_history_paginates_at_200(): void
     {
         $staff = $this->makeStaff();
         $patient = $this->makePatient('Anna', 'Reyes');
@@ -342,8 +350,63 @@ class DispenseTest extends TestCase
         }
         DB::table('medicine_requests')->insert($rows);
 
-        $body = $this->actingAs($staff)->get('/staff/dispense')->assertOk()->getContent();
-        $this->assertSame(200, substr_count($body, '<td>Caplet</td>'), 'LIMIT 200 must render exactly 200 rows');
+        // Recent preview: 10 rows plus the View All link.
+        $module = $this->actingAs($staff)->get('/staff/dispense')->assertOk();
+        $this->assertSame(10, substr_count($module->getContent(), '<td>Caplet</td>'), 'The module page previews 10 rows');
+        $module->assertSee(route('staff.history', ['tab' => 'dispense']));
+
+        // History: 200 rows per page, shared table markup, back link + nav.
+        $page1 = $this->actingAs($staff)->get('/staff/history?tab=dispense')->assertOk();
+        $this->assertSame(200, substr_count($page1->getContent(), '<td>Caplet</td>'), 'History page 1 must render 200 rows');
+        $page1->assertSee('Dispense History')
+            ->assertSee('Dispense history pagination', false);
+
+        $page2 = $this->actingAs($staff)->get('/staff/history?tab=dispense&page=2')->assertOk();
+        $this->assertSame(5, substr_count($page2->getContent(), '<td>Caplet</td>'));
+    }
+
+    /**
+     * The history toolbar keeps the module's status semantics: a rejected
+     * filter hides dispensed rows (and shows the empty state), a junk
+     * value collapses to 'all', and the active filter rides along in every
+     * pagination link.
+     */
+    public function test_history_status_filter_is_live_and_survives_pagination(): void
+    {
+        $staff = $this->makeStaff();
+        $patient = $this->makePatient('Anna', 'Reyes');
+        $m = $this->makeMedicine('Caplet');
+        $rows = [];
+        for ($i = 0; $i < 205; $i++) {
+            $rows[] = [
+                'user_id' => $patient->id, 'medicine_id' => $m, 'reason' => "Row $i",
+                'status' => 'dispensed', 'requested_at' => sprintf('2026-09-01 %02d:%02d:00', $i % 24, $i % 60),
+            ];
+        }
+        DB::table('medicine_requests')->insert($rows);
+
+        // All rows are dispensed: filtering to rejected empties the table.
+        $this->actingAs($staff)->get('/staff/history?tab=dispense&history_status=rejected')->assertOk()
+            ->assertSee('No records found.')
+            ->assertSee('<option value="rejected" selected>', false);
+
+        // Junk status falls back to 'all' for both the dropdown and rows.
+        $junk = $this->actingAs($staff)->get('/staff/history?tab=dispense&history_status=banana')->assertOk();
+        $this->assertSame(200, substr_count($junk->getContent(), '<td>Caplet</td>'));
+        $junk->assertSee('<option value="all" selected>', false);
+
+        // A live value narrows nothing here (all rows match) but must be
+        // selected in the dropdown AND present in every page link.
+        $all = $this->actingAs($staff)->get('/staff/history?tab=dispense&history_status=dispensed')->assertOk();
+        $this->assertSame(200, substr_count($all->getContent(), '<td>Caplet</td>'));
+        $all->assertSee('<option value="dispensed" selected>', false)
+            ->assertSee('history_status=dispensed', false);
+
+        $page2 = $this->actingAs($staff)
+            ->get('/staff/history?tab=dispense&history_status=dispensed&page=2')
+            ->assertOk();
+        $this->assertSame(5, substr_count($page2->getContent(), '<td>Caplet</td>'));
+        $page2->assertSee('history_status=dispensed', false);
     }
 
     // ---------------------------------------------------------------------
@@ -358,7 +421,7 @@ class DispenseTest extends TestCase
         $response->assertOk()
             ->assertSee('Please select a patient.')
             ->assertSee('Please select a medicine.')
-            ->assertSee('Medicine requests are limited to 1 unit per day.')
+            ->assertSee('Each request is limited to 1 unit.')
             // qty 0 never exceeds the limit -> the 5th rule stays silent.
             ->assertDontSee('Quantity exceeds the reasonable limit')
             // Errors reopen the modal (line 298).
@@ -366,7 +429,7 @@ class DispenseTest extends TestCase
 
         $body = $response->getContent();
         $this->assertLessThan(strpos($body, 'Please select a medicine.'), strpos($body, 'Please select a patient.'));
-        $this->assertLessThan(strpos($body, 'Medicine requests are limited to 1 unit per day.'), strpos($body, 'Please select a medicine.'));
+        $this->assertLessThan(strpos($body, 'Each request is limited to 1 unit.'), strpos($body, 'Please select a medicine.'));
 
         $this->assertSame(0, DB::table('medicine_requests')->count());
         $this->assertSame(0, DB::table('dispense_logs')->count());
@@ -388,7 +451,7 @@ class DispenseTest extends TestCase
         $this->actingAs($staff)->post('/staff/dispense', [
             'user_id' => $patient->id, 'medicine_id' => $strict, 'quantity' => 2,
         ])->assertOk()
-            ->assertSee('Medicine requests are limited to 1 unit per day.')
+            ->assertSee('Each request is limited to 1 unit.')
             ->assertSee('Quantity exceeds the reasonable limit for this product (max 1).');
 
         // Default threshold 10: qty 15 fires both rules with max 10.
@@ -623,10 +686,11 @@ class DispenseTest extends TestCase
     }
 
     // ---------------------------------------------------------------------
-    // 24h duplicate guard (original 57-59)
+    // Per-medicine daily limit (replaces the legacy 24h duplicate guard):
+    // one request per user per specific tablet/capsule medicine per day
     // ---------------------------------------------------------------------
 
-    public function test_same_medicine_within_24_hours_blocks_the_dispense(): void
+    public function test_the_same_tablet_medicine_cannot_be_requested_twice_on_the_same_day(): void
     {
         $staff = $this->makeStaff();
         $patient = $this->makePatient('Anna', 'Reyes');
@@ -637,11 +701,18 @@ class DispenseTest extends TestCase
             'requested_at' => date('Y-m-d H:i:s'),
         ]);
 
+        // Submitted directly to the backend - the UI is not involved.
         $this->actingAs($staff)->post('/staff/dispense', [
             'user_id' => $patient->id, 'medicine_id' => $m, 'quantity' => 1,
             'notes' => 'Fresh note',
         ])->assertOk()
-            ->assertSee('This patient already has the same medicine or purpose recorded within the last 24 hours.');
+            ->assertSee('You have already requested this medicine today. You may request it again tomorrow.');
+
+        // A rapid duplicate submission is refused too - nothing is written.
+        $this->actingAs($staff)->post('/staff/dispense', [
+            'user_id' => $patient->id, 'medicine_id' => $m, 'quantity' => 1,
+        ])->assertOk()
+            ->assertSee('You have already requested this medicine today. You may request it again tomorrow.');
 
         $this->assertSame(1, DB::table('medicine_requests')->count());
         $this->assertSame(0, DB::table('stock_movements')->count());
@@ -649,52 +720,254 @@ class DispenseTest extends TestCase
         $this->assertSame(0, DB::table('audit_logs')->count());
     }
 
-    public function test_the_same_purpose_matches_across_different_medicines(): void
+    public function test_two_different_tablet_medicines_can_be_requested_on_the_same_day(): void
     {
         $staff = $this->makeStaff();
         $patient = $this->makePatient('Anna', 'Reyes');
-        $a = $this->makeMedicine('Biogesic');
-        $this->makeBatch($a, 7);
-        $b = $this->makeMedicine('Aspirin');
-        $this->makeBatch($b, 7);
-        $this->makeRequest([
-            'user_id' => $patient->id, 'medicine_id' => $a, 'reason' => 'Fever',
-            'requested_at' => date('Y-m-d H:i:s'),
-        ]);
+        $biogesic = $this->makeMedicine('Biogesic');
+        $this->makeBatch($biogesic, 7);
+        $kremil = $this->makeMedicine('Kremil-S');
+        $this->makeBatch($kremil, 7);
 
-        // Same purpose (TRIM(reason) match) on ANOTHER medicine -> blocked.
+        // Same purpose (notes) on another tablet: the old purpose-matching
+        // guard would have blocked this - the new rule does not.
         $this->actingAs($staff)->post('/staff/dispense', [
-            'user_id' => $patient->id, 'medicine_id' => $b, 'quantity' => 1,
+            'user_id' => $patient->id, 'medicine_id' => $biogesic, 'quantity' => 1,
             'notes' => 'Fever',
-        ])->assertOk()
-            ->assertSee('This patient already has the same medicine or purpose recorded within the last 24 hours.');
-        $this->assertSame(1, DB::table('medicine_requests')->count());
+        ])->assertRedirect(route('staff.dispense'))
+            ->assertSessionHas('success', 'Dispensed and added to the dispensing record.');
 
-        // A different purpose on that other medicine goes through.
         $this->actingAs($staff)->post('/staff/dispense', [
-            'user_id' => $patient->id, 'medicine_id' => $b, 'quantity' => 1,
-            'notes' => 'Headache',
-        ])->assertRedirect(route('staff.dispense'));
+            'user_id' => $patient->id, 'medicine_id' => $kremil, 'quantity' => 1,
+            'notes' => 'Fever',
+        ])->assertRedirect(route('staff.dispense'))
+            ->assertSessionHas('success', 'Dispensed and added to the dispensing record.');
+
+        $this->assertSame(2, DB::table('medicine_requests')->count());
+
+        // A repeat of the FIRST medicine afterwards is still refused today.
+        $this->actingAs($staff)->post('/staff/dispense', [
+            'user_id' => $patient->id, 'medicine_id' => $biogesic, 'quantity' => 1,
+        ])->assertOk()
+            ->assertSee('You have already requested this medicine today. You may request it again tomorrow.');
         $this->assertSame(2, DB::table('medicine_requests')->count());
     }
 
-    public function test_a_request_older_than_the_window_does_not_block(): void
+    public function test_two_different_capsule_medicines_can_be_requested_on_the_same_day(): void
+    {
+        $staff = $this->makeStaff();
+        $patient = $this->makePatient('Anna', 'Reyes');
+        $vitC = $this->makeMedicine('Vitamin C', ['unit' => 'capsule']);
+        $this->makeBatch($vitC, 20);
+        $vitB = $this->makeMedicine('Vitamin B Complex', ['unit' => 'Capsule']); // case-insensitive unit
+        $this->makeBatch($vitB, 20);
+
+        $this->actingAs($staff)->post('/staff/dispense', [
+            'user_id' => $patient->id, 'medicine_id' => $vitC, 'quantity' => 1,
+            'notes' => 'Daily vitamin',
+        ])->assertRedirect(route('staff.dispense'));
+
+        $this->actingAs($staff)->post('/staff/dispense', [
+            'user_id' => $patient->id, 'medicine_id' => $vitB, 'quantity' => 1,
+            'notes' => 'Daily vitamin',
+        ])->assertRedirect(route('staff.dispense'));
+
+        $this->assertSame(2, DB::table('medicine_requests')->count());
+
+        // The first capsule is still limited for the rest of the day.
+        $this->actingAs($staff)->post('/staff/dispense', [
+            'user_id' => $patient->id, 'medicine_id' => $vitC, 'quantity' => 1,
+        ])->assertOk()
+            ->assertSee('You have already requested this medicine today. You may request it again tomorrow.');
+        $this->assertSame(2, DB::table('medicine_requests')->count());
+    }
+
+    public function test_a_tablet_request_does_not_block_a_capsule_request_for_another_medicine(): void
+    {
+        $staff = $this->makeStaff();
+        $patient = $this->makePatient('Anna', 'Reyes');
+        $biogesic = $this->makeMedicine('Biogesic', ['unit' => 'tablet']);
+        $this->makeBatch($biogesic, 7);
+        $vitC = $this->makeMedicine('Vitamin C', ['unit' => 'capsule']);
+        $this->makeBatch($vitC, 20);
+
+        $this->actingAs($staff)->post('/staff/dispense', [
+            'user_id' => $patient->id, 'medicine_id' => $biogesic, 'quantity' => 1,
+        ])->assertRedirect(route('staff.dispense'));
+
+        // Tablet first, capsule (another medicine) after: allowed.
+        $this->actingAs($staff)->post('/staff/dispense', [
+            'user_id' => $patient->id, 'medicine_id' => $vitC, 'quantity' => 1,
+        ])->assertRedirect(route('staff.dispense'));
+
+        $this->assertSame(2, DB::table('medicine_requests')->count());
+    }
+
+    public function test_first_aid_and_other_non_tablet_items_are_not_subject_to_the_daily_limit(): void
+    {
+        $staff = $this->makeStaff();
+        $patient = $this->makePatient('Anna', 'Reyes');
+        $gauze = $this->makeMedicine('Gauze Pads', ['unit' => 'box']);
+        $this->makeBatch($gauze, 5);
+        $roll = $this->makeMedicine('Rolled Gauze', ['unit' => 'roll']);
+        $this->makeBatch($roll, 4);
+        $burnGel = $this->makeMedicine('Burn Gel', ['unit' => 'tube']);
+        $this->makeBatch($burnGel, 3);
+        $alcohol = $this->makeMedicine('Rubbing Alcohol', ['unit' => 'bottle']);
+        $this->makeBatch($alcohol, 2);
+
+        // Gauze (box) twice on the same day - not blocked.
+        $this->actingAs($staff)->post('/staff/dispense', [
+            'user_id' => $patient->id, 'medicine_id' => $gauze, 'quantity' => 1,
+        ])->assertRedirect(route('staff.dispense'));
+        $this->actingAs($staff)->post('/staff/dispense', [
+            'user_id' => $patient->id, 'medicine_id' => $gauze, 'quantity' => 1,
+        ])->assertRedirect(route('staff.dispense'));
+
+        // Burn Gel (tube) and Rolled Gauze (roll) twice each from one
+        // opened unit - their existing container/roll tracking rules.
+        foreach ([$burnGel, $roll] as $partialId) {
+            $this->actingAs($staff)->post('/staff/dispense', [
+                'user_id' => $patient->id, 'medicine_id' => $partialId, 'quantity' => 1,
+                'dispense_from' => 'new',
+            ])->assertRedirect(route('staff.dispense'));
+            $this->actingAs($staff)->post('/staff/dispense', [
+                'user_id' => $patient->id, 'medicine_id' => $partialId, 'quantity' => 1,
+                'dispense_from' => 'existing',
+            ])->assertRedirect(route('staff.dispense'));
+        }
+
+        // Rubbing Alcohol (bottle) twice on the same day - not blocked.
+        $this->actingAs($staff)->post('/staff/dispense', [
+            'user_id' => $patient->id, 'medicine_id' => $alcohol, 'quantity' => 1,
+            'dispense_from' => 'new',
+        ])->assertRedirect(route('staff.dispense'));
+        $this->actingAs($staff)->post('/staff/dispense', [
+            'user_id' => $patient->id, 'medicine_id' => $alcohol, 'quantity' => 1,
+            'dispense_from' => 'existing',
+        ])->assertRedirect(route('staff.dispense'));
+
+        $this->assertSame(8, DB::table('medicine_requests')->count());
+
+        // None of those first-aid requests counted toward the limit of an
+        // eligible tablet medicine for the SAME patient the SAME day.
+        $tablet = $this->makeMedicine('Biogesic');
+        $this->makeBatch($tablet, 7);
+        $this->makeRequest([
+            'user_id' => $patient->id, 'medicine_id' => $tablet, 'requested_at' => date('Y-m-d H:i:s'),
+        ]);
+        $this->actingAs($staff)->post('/staff/dispense', [
+            'user_id' => $patient->id, 'medicine_id' => $tablet, 'quantity' => 1,
+        ])->assertOk()
+            ->assertSee('You have already requested this medicine today. You may request it again tomorrow.');
+    }
+
+    public function test_the_same_medicine_can_be_requested_again_the_next_calendar_day(): void
     {
         $staff = $this->makeStaff();
         $patient = $this->makePatient('Anna', 'Reyes');
         $m = $this->makeMedicine('Biogesic');
         $this->makeBatch($m, 7);
+        // Last night 23:30 - inside the old rolling 24-hour window, but on
+        // the previous CALENDAR day: today's request must go through.
         $this->makeRequest([
-            'user_id' => $patient->id, 'medicine_id' => $m, 'reason' => 'Way back',
-            'requested_at' => '2020-01-01 10:00:00',
+            'user_id' => $patient->id, 'medicine_id' => $m, 'reason' => 'Late note',
+            'requested_at' => date('Y-m-d H:i:s', strtotime('yesterday 23:30:00')),
         ]);
 
         $this->actingAs($staff)->post('/staff/dispense', [
             'user_id' => $patient->id, 'medicine_id' => $m, 'quantity' => 1,
-            'notes' => 'Now',
-        ])->assertRedirect(route('staff.dispense'));
+            'notes' => 'Morning note',
+        ])->assertRedirect(route('staff.dispense'))
+            ->assertSessionHas('success', 'Dispensed and added to the dispensing record.');
 
         $this->assertSame(2, DB::table('medicine_requests')->count());
+    }
+
+    public function test_daily_limits_are_independent_per_user(): void
+    {
+        $staff = $this->makeStaff();
+        $anna = $this->makePatient('Anna', 'Reyes');
+        $ben = $this->makePatient('Ben', 'Cruz', employeeNo: 'EMP-9');
+        $m = $this->makeMedicine('Biogesic');
+        $this->makeBatch($m, 7);
+        $this->makeRequest([
+            'user_id' => $anna->id, 'medicine_id' => $m, 'requested_at' => date('Y-m-d H:i:s'),
+        ]);
+
+        // Anna already has Biogesic today -> blocked.
+        $this->actingAs($staff)->post('/staff/dispense', [
+            'user_id' => $anna->id, 'medicine_id' => $m, 'quantity' => 1,
+        ])->assertOk()
+            ->assertSee('You have already requested this medicine today. You may request it again tomorrow.');
+
+        // Ben's limit is independent: his first request goes through.
+        $this->actingAs($staff)->post('/staff/dispense', [
+            'user_id' => $ben->id, 'medicine_id' => $m, 'quantity' => 1,
+        ])->assertRedirect(route('staff.dispense'))
+            ->assertSessionHas('success', 'Dispensed and added to the dispensing record.');
+
+        $this->assertSame(2, DB::table('medicine_requests')->count());
+        $this->assertDatabaseHas('medicine_requests', ['user_id' => $ben->id, 'medicine_id' => $m]);
+    }
+
+    public function test_the_daily_limit_runs_before_the_allergy_decision_screen_and_stock_checks(): void
+    {
+        $staff = $this->makeStaff();
+        $patient = $this->makePatient('Anna', 'Reyes');
+        $m = $this->makeMedicine('Biogesic');
+        $this->makeBatch($m, 7);
+        $this->makeAllergy($patient->id, $m, 'Biogesic', 'severe');
+        $this->makeRequest([
+            'user_id' => $patient->id, 'medicine_id' => $m, 'requested_at' => date('Y-m-d H:i:s'),
+        ]);
+
+        // The blocked request never reaches the allergy decision screen,
+        // the stock check or the transaction - no writes at all.
+        $this->actingAs($staff)->post('/staff/dispense', [
+            'user_id' => $patient->id, 'medicine_id' => $m, 'quantity' => 1,
+        ])->assertOk()
+            ->assertSee('You have already requested this medicine today. You may request it again tomorrow.')
+            ->assertDontSee('Allergy warning requires a decision.');
+
+        $this->assertSame(1, DB::table('medicine_requests')->count());
+        $this->assertSame(0, DB::table('dispense_logs')->count());
+        $this->assertSame(0, DB::table('stock_movements')->count());
+        $this->assertSame(7, $this->batchQuantity($m));
+    }
+
+    public function test_the_form_marks_only_the_blocked_medicine_for_the_selected_patient(): void
+    {
+        $staff = $this->makeStaff();
+        $patient = $this->makePatient('Anna', 'Reyes');
+        $biogesic = $this->makeMedicine('Biogesic');
+        $this->makeBatch($biogesic, 7);
+        $burnGel = $this->makeMedicine('Burn Gel', ['unit' => 'tube']);
+        $this->makeBatch($burnGel, 3);
+        $vitC = $this->makeMedicine('Vitamin C', ['unit' => 'capsule']);
+        $this->makeBatch($vitC, 20);
+
+        // The patient has Biogesic AND Burn Gel recorded today.
+        $this->makeRequest([
+            'user_id' => $patient->id, 'medicine_id' => $biogesic, 'requested_at' => date('Y-m-d H:i:s'),
+        ]);
+        $this->makeRequest([
+            'user_id' => $patient->id, 'medicine_id' => $burnGel, 'requested_at' => date('Y-m-d H:i:s'),
+        ]);
+
+        $body = $this->actingAs($staff)->get('/staff/dispense?user_id='.$patient->id)
+            ->assertOk()
+            // Only the eligible Biogesic is marked as blocked; the
+            // non-tablet Burn Gel and the untouched Vitamin C capsule stay
+            // selectable and requestable.
+            ->assertSee('<option value="'.$biogesic.'" data-stock="7" data-limit="10" data-requested-today="1" >', false)
+            ->assertSee('<option value="'.$burnGel.'" data-stock="3" data-limit="10" data-requested-today="0" >', false)
+            ->assertSee('<option value="'.$vitC.'" data-stock="20" data-limit="10" data-requested-today="0" >', false)
+            ->assertSee('already requested today', false)
+            // The daily-limit help div is now filled by the page script
+            // only, so it is empty in the server-rendered HTML.
+            ->getContent();
+        $this->assertSame(1, substr_count($body, 'data-requested-today="1"'));
     }
 
     // ---------------------------------------------------------------------
@@ -765,14 +1038,18 @@ class DispenseTest extends TestCase
     {
         $student = $this->makeUser('studentx', 'user', 'student');
         $staff = $this->makeStaff();
+        $flash = 'Please visit the clinic. Staff will enter your medicine request. '
+            .'One request per tablet or capsule medicine per day. '
+            .'Other eligible medicines may be requested separately. '
+            .'First-aid supplies and other non-tablet/capsule items are not subject to this restriction.';
 
         $this->actingAs($student)->get('/user/request_medicine')
             ->assertRedirect(route('user.dashboard'))
-            ->assertSessionHas('info', 'Please visit the clinic. Staff will enter your medicine request.');
+            ->assertSessionHas('info', $flash);
 
         $this->actingAs($student)->post('/user/request_medicine')
             ->assertRedirect(route('user.dashboard'))
-            ->assertSessionHas('info', 'Please visit the clinic. Staff will enter your medicine request.');
+            ->assertSessionHas('info', $flash);
 
         $this->actingAs($staff)->get('/user/request_medicine')
             ->assertRedirect(route('staff.dashboard'));

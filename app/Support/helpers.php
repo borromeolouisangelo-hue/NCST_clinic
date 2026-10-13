@@ -258,34 +258,6 @@ if (! function_exists('check_allergy_conflict')) {
     }
 }
 
-if (! function_exists('recent_medicine_request_conflict')) {
-    /**
-     * True when the same patient already has this medicine - or the same
-     * purpose - recorded within the last 24 hours (original functions.php:620).
-     * The reference spells the window `NOW() - INTERVAL 24 HOUR`; the port uses
-     * the plain-function equivalent SUBDATE(NOW(), 1) per the TestCase shim
-     * convention (identical wall-clock arithmetic on DATETIME columns, and it
-     * runs unmodified on the isolated SQLite test connection).
-     */
-    function recent_medicine_request_conflict($user_id, $medicine_id, $reason)
-    {
-        $reason = trim((string) $reason);
-        $where = 'user_id = ? AND requested_at >= SUBDATE(NOW(), 1)';
-        $params = [(int) $user_id];
-
-        if ($reason !== '') {
-            $where .= ' AND (medicine_id = ? OR TRIM(reason) = ?)';
-            $params[] = (int) $medicine_id;
-            $params[] = $reason;
-        } else {
-            $where .= ' AND medicine_id = ?';
-            $params[] = (int) $medicine_id;
-        }
-
-        return (int) DB::selectOne("SELECT COUNT(*) AS c FROM medicine_requests WHERE $where", $params)->c > 0;
-    }
-}
-
 if (! function_exists('deduct_stock_trace')) {
     /**
      * Deduct a quantity from a medicine's batches, oldest expiry first (the

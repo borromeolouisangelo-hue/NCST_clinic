@@ -3,7 +3,9 @@
 namespace App\Http\Controllers\Staff;
 
 use App\Http\Controllers\Controller;
+use App\Services\PatientActivityService;
 use App\Services\PatientRegistrationService;
+use App\Services\ProfilePhoto;
 use App\Services\StaffHistory;
 use App\Support\ShellContext;
 use Illuminate\Contracts\View\View;
@@ -24,10 +26,20 @@ use Illuminate\Support\MessageBag;
  *
  * Every query keeps the original SQL semantics: same joins, same WHERE/ORDER,
  * same LIMITs, every user-controlled value bound as a parameter.
+ *
+ * Beyond the ported pages, activities() renders the Patient Activity
+ * History page (GET /staff/patient_activities): the combined activity feed
+ * of one patient through App\Services\PatientActivityService, reusing the
+ * exact resolvePatient() lookup the overview's ?id= view performs, and
+ * activityDetail() renders one read-only record of that feed
+ * (GET /staff/patient_activity_detail, ?type= + ?id=).
  */
 class PatientController extends Controller
 {
-    public function __construct(protected PatientRegistrationService $patientRegistrationService) {}
+    public function __construct(
+        protected PatientRegistrationService $patientRegistrationService,
+        protected PatientActivityService $patientActivityService,
+    ) {}
 
     /**
      * GET /staff/patients - the patient list (search / type filter), or the
@@ -38,31 +50,16 @@ class PatientController extends Controller
         $viewId = (int) $request->query('id', 0);
 
         // ---- Single patient detail (original lines 12-48) --------------------
-        // The original also loaded the 10 most recent consultations and
-        // dispenses for the profile's activity cards; those sections were
-        // removed from this overview (the records remain on /staff/consultations
-        // and /staff/dispense), so their queries went with them.
+        // The original's per-type activity cards (recent consultations +
+        // recent dispenses) are replaced below by one combined Recent
+        // Activity card: the same 10-row preview scope, now merged across
+        // every activity family through PatientActivityService.
         $patient = null;
         $medRec = null;
         $allergies = collect();
 
         if ($viewId > 0) {
-            $patient = DB::table('users as u')
-                ->leftJoin('profiles as p', 'p.user_id', '=', 'u.id')
-                ->leftJoin('student_details as sd', 'sd.user_id', '=', 'u.id')
-                ->leftJoin('employee_details as ed', 'ed.user_id', '=', 'u.id')
-                ->select(
-                    'u.*', 'p.*',
-                    'sd.student_no', 'sd.course', 'sd.year_level', 'sd.section',
-                    'ed.employee_no', 'ed.department', 'ed.position'
-                )
-                ->where('u.id', $viewId)
-                // Only patient accounts profile-render: a staff/admin id (or a
-                // nonexistent one) resolves to null and the page falls back to
-                // the list, so ?id= can never surface a non-patient account.
-                ->where('u.role', 'user')
-                ->limit(1)
-                ->first();
+            $patient = $this->resolvePatient($viewId);
 
             if ($patient) {
                 $medRec = DB::table('medical_records')
@@ -76,6 +73,13 @@ class PatientController extends Controller
                     ->get();
             }
         }
+
+        // ---- Recent Activity preview (the 10 newest combined activities;
+        // the full, searchable history lives behind the "View All
+        // Activities" button on the dedicated page). ----
+        $recentActivities = $patient
+            ? $this->patientActivityService->recent((int) $patient->id, (string) $patient->account_type)
+            : [];
 
         // ---- Patient list using StaffHistory (replaces original list with pagination) --
         $search = trim((string) $request->query('q', ''));
@@ -127,8 +131,14 @@ class PatientController extends Controller
             'shell' => ShellContext::fromUser($request->user(), activePath: 'staff/patients'),
             'title' => 'Patients',
             'patient' => $patient,
+            // The patient's stored picture - profiles.photo arrives with the
+            // resolvePatient() join (p.user_id = u.id), so it is always this
+            // patient's own file; '' makes the view fall back to the default
+            // avatar placeholder.
+            'patientPhotoUrl' => ProfilePhoto::url($patient->photo ?? null),
             'medRec' => $medRec,
             'allergies' => $allergies,
+            'recentActivities' => $recentActivities,
             'search' => $search,
             'typeFilter' => $typeFilter,
             'patients' => $patients,
@@ -136,6 +146,153 @@ class PatientController extends Controller
             'pagination' => $pagination,
             'patientError' => $patientError,
         ]);
+    }
+
+    /**
+     * GET /staff/patient_activities - the Patient Activity History page:
+     * the full combined activity feed (consultations, dispensing, equipment
+     * loans, certificates and - employees only - sick leaves) for ONE
+     * patient, newest first, with search, activity-type filter and
+     * server-side pagination.
+     *
+     * Read-only: the page renders existing records through
+     * PatientActivityService and never writes. Patient access reuses the
+     * overview's exact lookup, so a missing/invalid/non-patient id can
+     * never reach another account's records - it redirects to the list.
+     */
+    public function activities(Request $request): View|RedirectResponse
+    {
+        $patient = $this->resolvePatient((int) $request->query('id', 0));
+
+        if (! $patient) {
+            return redirect()->route('staff.patients');
+        }
+
+        // Same whitelist pattern as the patient list: the search text is
+        // trimmed, the type is validated against THIS patient's options
+        // (Sick Leave is never an option for students), and the page is
+        // clamped to >= 1. Everything the pagination links rebuild lives in
+        // $pagination['query'] below, so patient, search and filter survive
+        // page navigation.
+        $search = trim((string) $request->query('q', ''));
+        $typeParam = (string) $request->query('type', 'all');
+        $typeOptions = $this->patientActivityService->filterOptions((string) $patient->account_type);
+        $typeFilter = isset($typeOptions[$typeParam]) ? $typeParam : 'all';
+        $page = max(1, (int) $request->query('page', 1));
+        $perPage = 15;
+
+        $result = $this->patientActivityService->search(
+            (int) $patient->id,
+            (string) $patient->account_type,
+            $search,
+            $typeFilter,
+            $perPage,
+            ($page - 1) * $perPage,
+        );
+
+        $totalPages = (int) ceil($result['total'] / $perPage);
+        $pagination = [
+            'current' => $page,
+            'total' => $totalPages,
+            'perPage' => $perPage,
+            'totalItems' => $result['total'],
+            'baseUrl' => url('staff/patient_activities'),
+            // Callback keeps a "0" search (dropping only blank values), so a
+            // numeric q survives into the page links like id/type do.
+            'query' => array_filter([
+                'id' => (int) $patient->id,
+                'q' => $search,
+                'type' => $typeFilter === 'all' ? '' : $typeFilter,
+            ], fn ($value) => $value !== '' && $value !== null),
+        ];
+
+        return view('staff.patient_activities', [
+            'shell' => ShellContext::fromUser($request->user(), activePath: 'staff/patients'),
+            'title' => 'Patient Activity History',
+            'patient' => $patient,
+            // Same source as the overview (resolvePatient()'s profiles join),
+            // so both pages always show the SAME picture for this patient.
+            'patientPhotoUrl' => ProfilePhoto::url($patient->photo ?? null),
+            'activities' => $result['rows'],
+            'search' => $search,
+            'typeFilter' => $typeFilter,
+            'typeOptions' => $typeOptions,
+            'pagination' => $pagination,
+        ]);
+    }
+
+    /**
+     * GET /staff/patient_activity_detail - the read-only View target
+     * behind the overview's Recent Activity list and the activity history
+     * page (?type= + ?id=): ONE existing record of ONE activity family.
+     *
+     * The service only returns a record that exists AND belongs to a
+     * patient (role=user; sick leaves additionally require an employee),
+     * so a tampered or stale link - like an invalid patient id - redirects
+     * to the patient list instead of rendering another account's data.
+     * Read-only: nothing here writes and the page offers no edit, delete
+     * or print actions (medical certificates keep their own existing
+     * ?view= page on the certificates module).
+     */
+    public function activityDetail(Request $request): View|RedirectResponse
+    {
+        $activity = $this->patientActivityService->detail(
+            (string) $request->query('type', ''),
+            (int) $request->query('id', 0),
+        );
+
+        $patient = $activity
+            ? $this->resolvePatient((int) $activity['patient_id'])
+            : null;
+
+        if (! $patient) {
+            return redirect()->route('staff.patients');
+        }
+
+        return view('staff.patient_activity_detail', [
+            'shell' => ShellContext::fromUser($request->user(), activePath: 'staff/patients'),
+            'title' => $activity['label'].' Details',
+            'patient' => $patient,
+            'activity' => $activity,
+        ]);
+    }
+
+    /**
+     * The single patient lookup shared by the overview (?id= profile view)
+     * and the activity history page: profile + student/employee details in
+     * one row, and ONLY role=user accounts resolve - a staff/admin id (or a
+     * nonexistent one) yields null so ?id= can never surface a non-patient
+     * account.
+     *
+     * ->id is always the PATIENT'S USER id (u.id re-stated last in the
+     * select): p.* repeats u.id, created_at and updated_at, and this driver
+     * keeps the last duplicate, which made ->id the PROFILE id and misrouted
+     * every ->id-built link (View All, Back, pagination) to whichever other
+     * patient happened to own that profile id once profiles.id and users.id
+     * had drifted apart (as they always do once any user has no profile).
+     */
+    private function resolvePatient(int $id): ?object
+    {
+        if ($id <= 0) {
+            return null;
+        }
+
+        return DB::table('users as u')
+            ->leftJoin('profiles as p', 'p.user_id', '=', 'u.id')
+            ->leftJoin('student_details as sd', 'sd.user_id', '=', 'u.id')
+            ->leftJoin('employee_details as ed', 'ed.user_id', '=', 'u.id')
+            ->select(
+                'u.*', 'p.*',
+                'sd.student_no', 'sd.course', 'sd.year_level', 'sd.section',
+                'ed.employee_no', 'ed.department', 'ed.position',
+                // Re-state the user id AFTER p.* so ->id cannot resolve to
+                // the profile id (see the docblock above).
+                'u.id as id',
+            )
+            ->where('u.id', $id)
+            ->where('u.role', 'user')
+            ->limit(1)
+            ->first();
     }
 
     /**

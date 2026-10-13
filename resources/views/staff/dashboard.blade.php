@@ -3,8 +3,9 @@
     118-303): KPI stat cards with trend badges, the line-chart card with its
     period sidebar, the two bar-chart cards, the recent-activity preview
     cards (10 newest rows per history section, each with an above-the-card
-    View All button to its dedicated page), and the low stock
-    alerts table.
+    View All button to its dedicated page), and the inventory alert cards
+    side by side: the low stock alerts table and the Medicine Expiring
+    Soon table (batches expiring within the next 7 days, inclusive).
 
     The scripts block sits at the end of the content area exactly like the
     original (lines 267-301): charts.js then the inline init, both before
@@ -53,9 +54,24 @@
                     </div>
                 </div>
 
-                <!-- Line Chart with Period Sidebar -->
+                <!-- Overview row: line chart on the left, compact mini
+                     calendar on the right. The calendar HTML is written
+                     directly below (same card structure as the chart card)
+                     instead of the shared layouts/partials/calendar partial,
+                     but it keeps the shared calendar.js contract - one
+                     #dashboardCalendar element initialized once - and the
+                     View Calendar button opens route('staff.calendar'), the
+                     full month/week/list page. Height matching: the mini
+                     calendar has a definite compact height (calendar.js:
+                     height 380 + expandRows + dayMaxEvents auto-fit), so it
+                     sets the row height and can never be inflated by busy
+                     months; the chart card fills the same height
+                     (charts.js fitCanvasToDisplaySize + the scoped rules in
+                     style.css), so both cards match exactly with neither
+                     clipped nor left with dead space. Below xl the columns
+                     stack. -->
                 <div class="row g-2 mb-3 staff-dashboard-charts">
-                    <div class="col-12">
+                    <div class="col-12 col-xl-8">
                         <div class="card chart-card staff-chart-card staff-line-card">
                             <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
                                 <div>
@@ -91,6 +107,38 @@
                             </div>
                         </div>
                     </div>
+                    
+                    <div class="col-12 col-xl-4 d-flex">
+                  
+                        @php
+                            $dashboardEventCount = count($calendarEvents ?? []);
+                        @endphp
+                        @if ($dashboardEventCount > 0)
+                            {{-- Both cards carry h-100: the compact
+                                 calendar (content-sized, never scrolling)
+                                 is the shorter side, so it stretches to the
+                                 chart card's exact height in this flex
+                                 column. --}}
+                            <div class="card dashboard-calendar-card clinic-calendar-card clinic-calendar-card--mini h-100 w-100">
+                                <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                                    <div class="clinic-calendar-title">
+                                        <i class="bi bi-calendar-event me-1"></i> Staff Calendar
+                                    </div>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <small class="text-muted">{{ $dashboardEventCount }} event{{ $dashboardEventCount !== 1 ? 's' : '' }}</small>
+                                        <a href="{{ route('staff.calendar') }}" class="btn btn-sm btn-outline-primary">View Calendar</a>
+                                    </div>
+                                </div>
+                                <div class="card-body clinic-calendar-body">
+                                    <div id="dashboardCalendar"
+                                         class="clinic-calendar js-clinic-calendar clinic-calendar--mini"
+                                         data-clinic-calendar
+                                         data-mode="mini"
+                                         data-events="{{ json_encode($calendarEvents ?? [], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) }}"></div>
+                                </div>
+                            </div>
+                        @endif
+                    </div>
                 </div>
 
                 <!-- Bottom Charts -->
@@ -109,47 +157,18 @@
                     </div>
                 </div>
 
-                <!-- Recent activity: the 10 newest records per history
-                     section (staffData()'s $recent preview through the same
-                     StaffHistory::table() the full pages use). Each card's
-                     View All button sits OUTSIDE and ABOVE the card, aligned
-                     left, and links to that section's dedicated page. -->
-                <div class="row g-3 mb-3">
-                    @php
-                        $recentViewAll = [
-                            'patients' => route('staff.patients'),
-                            'consultations' => route('staff.consultations'),
-                            'certificates' => route('staff.certificates'),
-                            'sick-leaves' => route('staff.sick_leaves'),
-                            'dispense' => route('staff.dispense'),
-                            'inventory' => route('staff.inventory'),
-                            'equipment-loans' => route('staff.equipment_loans'),
-                        ];
-                    @endphp
-                    @foreach ($historySections as $sectionKey => $sectionMeta)
-                        <div class="col-12">
-                            <a href="{{ $recentViewAll[$sectionKey] ?? route('staff.history', ['tab' => $sectionKey]) }}" class="btn btn-sm btn-outline-primary mb-2">
-                                View All <i class="bi bi-arrow-right"></i>
-                            </a>
-                            <div class="card">
-                                <div class="card-header"><i class="bi {{ $sectionMeta['icon'] }} me-1"></i> Recent {{ $sectionMeta['label'] }}</div>
-                                @if (! empty($recent[$sectionKey]['error']))
-                                    <div class="alert alert-danger py-2 mb-0 rounded-0">
-                                        <i class="bi bi-exclamation-triangle me-1"></i> This section could not be loaded right now.
-                                    </div>
-                                @endif
-                                <div class="table-responsive">
-                                    {!! \App\Services\StaffHistory::table($sectionKey, $recent[$sectionKey]['rows'] ?? []) !!}
-                                </div>
-                            </div>
-                        </div>
-                    @endforeach
-                </div>
+                
+                
 
-                <!-- Low Stock Alerts -->
+                <!-- Inventory alerts: Low Stock Alerts and Medicine Expiring
+                     Soon share one row. Both cards use col-lg-6 + h-100
+                     (the same side-by-side pair pattern as the admin
+                     dashboard's Low Stock / Expiring Within 90 Days cards),
+                     so they split the row width evenly on lg+ and stack
+                     full-width below it. -->
                 <div class="row g-3">
-                    <div class="col-12">
-                        <div class="card">
+                    <div class="col-12 col-lg-6 d-flex">
+                        <div class="card h-100 w-100">
                             <div class="card-header"><i class="bi bi-exclamation-triangle text-accent me-1"></i> Low Stock Alerts</div>
                             <div class="table-responsive">
                                 <table class="table table-hover mb-0">
@@ -167,14 +186,42 @@
                             </div>
                         </div>
                     </div>
+
+                    <!-- Medicine Expiring Soon: batches (expiry is tracked
+                         per batch) whose expiry date is today through the
+                         next 7 days, inclusive - most urgent first. Red
+                         badge = 0-3 days left, orange = 4-7 days. -->
+                    <div class="col-12 col-lg-6 d-flex">
+                        <div class="card h-100 w-100">
+                            <div class="card-header"><i class="bi bi-calendar-x text-accent me-1"></i> Medicine Expiring Soon</div>
+                            <div class="table-responsive">
+                                <table class="table table-hover mb-0">
+                                    <thead><tr><th>Medicine Name</th><th>Days Before Expiration</th><th>Expiration Date</th></tr></thead>
+                                    <tbody>
+                                    @if (! $expiringSoon)
+                                        <tr><td colspan="3" class="text-center text-muted py-3">No medicines expiring within the next 7 days.</td></tr>
+                                    @else
+                                    @foreach ($expiringSoon as $exp)
+                                        @php
+                                            // 0-3 days left: red (act now); 4-7 days: orange (upcoming).
+                                            $expiryBadge = $exp['days_left'] <= 3 ? 'bg-danger' : 'bg-orange';
+                                        @endphp
+                                        <tr>
+                                            <td>{{ $exp['name'] }}@if ($exp['batch_no'] !== null) <small class="text-muted d-block">Batch: {{ $exp['batch_no'] }}</small>@endif</td>
+                                            <td><span class="badge {{ $expiryBadge }}">{{ $exp['days_left'] === 0 ? 'Today' : $exp['days_left'].($exp['days_left'] === 1 ? ' day' : ' days') }}</span></td>
+                                            <td>{{ fmt_dt($exp['expiry_date'], 'M d, Y') }}</td>
+                                        </tr>
+                                    @endforeach
+                                    @endif
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
-                <!-- Feature 10: Dashboard Calendar -->
-                @include('layouts.partials.calendar', [
-                    'calendarEvents' => $calendarEvents ?? [],
-                    'calendarViewAllUrl' => route('staff.calendar'),
-                ])
-
+                
+                
             </div>
 
     <script src="{{ asset('assets/js/charts.js') }}"></script>

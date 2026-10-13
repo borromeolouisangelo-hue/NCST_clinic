@@ -190,7 +190,7 @@ class EquipmentLoansTest extends TestCase
             ->assertSee('applyEquipmentLimit', false);
     }
 
-    public function test_default_filter_shows_only_borrowed_loans(): void
+    public function test_default_filter_shows_every_status(): void
     {
         $staff = $this->makeStaff();
         $borrower = $this->makePatient('stu', 'student', 'Borrow', 'Ed', 'ST-001');
@@ -202,11 +202,19 @@ class EquipmentLoansTest extends TestCase
         $borrowedOn = date('M d, Y g:i A', strtotime(date('Y-m-d 09:00:00')));
         $returnedOn = date('M d, Y g:i A', strtotime(date('Y-m-d 09:00:00', strtotime('-3 days'))));
 
+        // The redesign defaults the page to All: no status parameter means
+        // no status restriction, so both rows render with All selected.
         $this->actingAs($staff)->get('/staff/equipment_loans')
             ->assertOk()
-            // Borrowed row renders; the returned row stays filtered out.
-            // (Dates are unique to table rows - patient names also appear
-            // in the borrower datalist, so they cannot assert absence.)
+            ->assertSee($borrowedOn, false)
+            ->assertSee($returnedOn, false)
+            ->assertSee('<option value="all" selected>All</option>', false);
+
+        // The borrowed-only view is still one filter away. (Dates are
+        // unique to table rows - patient names also appear in the borrower
+        // datalist, so they cannot assert absence.)
+        $this->actingAs($staff)->get('/staff/equipment_loans?status=borrowed')
+            ->assertOk()
             ->assertSee($borrowedOn, false)
             ->assertDontSee($returnedOn, false);
     }
@@ -296,13 +304,12 @@ class EquipmentLoansTest extends TestCase
             ->assertDontSee($returnedOn, false)
             ->assertSee('<input type="hidden" name="q" value="Borrow"', false);
 
-        // The default and legacy filters are untouched: no status parameter
-        // still means borrowed-only, with All present but not selected.
+        // The default now equals the explicit All option: no status
+        // parameter lists every status, with All selected.
         $this->actingAs($staff)->get('/staff/equipment_loans')
             ->assertOk()
-            ->assertSee('<option value="all"', false)
-            ->assertDontSee('<option value="all" selected>', false)
-            ->assertDontSee($returnedOn, false);
+            ->assertSee('<option value="all" selected>All</option>', false)
+            ->assertSee($returnedOn, false);
     }
 
     public function test_empty_state_when_no_loans_in_view(): void
@@ -540,11 +547,17 @@ class EquipmentLoansTest extends TestCase
         $this->makeLoan($borrower, $eq, 1, date('Y-m-d', strtotime('-3 days')), date('Y-m-d H:i:s', strtotime('-3 days')), 'borrowed');
         $back = $this->makeLoan($borrower, $eq, 1, date('Y-m-d', strtotime('-5 days')), date('Y-m-d H:i:s', strtotime('-5 days')), 'returned');
 
-        $borrowed = $this->actingAs($staff)->get('/staff/equipment_loans');
+        $borrowed = $this->actingAs($staff)->get('/staff/equipment_loans?status=borrowed');
         $borrowed->assertOk();
         $borrowed->assertSee('<span class="badge bg-orange">Borrowed</span>', false);
         $borrowed->assertSee('<span class="badge bg-danger">Overdue</span>', false);
         $borrowed->assertDontSee('<span class="badge bg-success">Returned</span>', false);
+
+        // The default view is All, so the returned row's green badge is on
+        // the page as well - agreeing with the selected filter.
+        $all = $this->actingAs($staff)->get('/staff/equipment_loans');
+        $all->assertOk();
+        $all->assertSee('<span class="badge bg-success">Returned</span>', false);
 
         // A returned loan keeps its record and turns green; it is no longer
         // in the borrowed view but is still on the page's own Returned filter.
@@ -637,6 +650,57 @@ class EquipmentLoansTest extends TestCase
 
         $this->actingAs($staff)->get('/staff/equipment_loans')->assertOk();
         $this->actingAs($staff)->get('/staff/equipment_loans?status=returned')->assertOk();
+    }
+
+    // ---------------------------------------------------------------------
+    // Module histories (module histories feature)
+    // ---------------------------------------------------------------------
+
+    /**
+     * The loans page previews the 10 newest matching loans; the complete
+     * history sits behind View All at /staff/history?tab=equipment-loans,
+     * paginated at the module's 20 records per page and rendered through
+     * the same history-table partial (identical Return forms per borrowed
+     * row). The toolbar status semantics carry over: a returned filter on
+     * an all-borrowed set shows the empty state, junk collapses to 'all',
+     * and the active status rides along in every page link.
+     */
+    public function test_module_previews_10_newest_and_history_paginates_at_20(): void
+    {
+        $staff = $this->makeStaff();
+        $borrower = $this->makePatient('stu', 'student', 'Borrow', 'Ed', 'ST-001');
+        $eq = $this->makeEquipment('Wheelchair', 30, 5);
+        for ($i = 0; $i < 25; $i++) {
+            $this->makeLoan($borrower, $eq, 1, date('Y-m-d'), date('Y-m-d 08:00:00'), 'borrowed');
+        }
+
+        // Recent preview: 10 rows (each borrowed row owns one Return
+        // button) plus the View All link.
+        $module = $this->actingAs($staff)->get('/staff/equipment_loans')->assertOk();
+        $this->assertSame(10, substr_count($module->getContent(), 'Return</button>'), 'The loans page previews 10 rows');
+        $module->assertSee(route('staff.history', ['tab' => 'equipment-loans']));
+
+        // History: shared table, 20 rows per page, back link + nav.
+        $page1 = $this->actingAs($staff)->get('/staff/history?tab=equipment-loans')->assertOk();
+        $this->assertSame(20, substr_count($page1->getContent(), 'Return</button>'), 'History page 1 must render 20 rows');
+        $page1->assertSee('Equipment Loans History')
+            ->assertSee('Equipment Loans history pagination', false);
+
+        $page2 = $this->actingAs($staff)->get('/staff/history?tab=equipment-loans&page=2')->assertOk();
+        $this->assertSame(5, substr_count($page2->getContent(), 'Return</button>'));
+
+        // Status filters stay live and survive pagination.
+        $this->actingAs($staff)->get('/staff/history?tab=equipment-loans&status=returned')->assertOk()
+            ->assertSee('No records found.')
+            ->assertSee('<option value="returned" selected>', false);
+
+        $borrowed = $this->actingAs($staff)->get('/staff/history?tab=equipment-loans&status=borrowed')->assertOk();
+        $this->assertSame(20, substr_count($borrowed->getContent(), 'Return</button>'));
+        $borrowed->assertSee('<option value="borrowed" selected>', false)
+            ->assertSee('status=borrowed', false);
+
+        $junk = $this->actingAs($staff)->get('/staff/history?tab=equipment-loans&status=banana')->assertOk();
+        $junk->assertSee('<option value="all" selected>', false);
     }
 
     // ---------------------------------------------------------------------

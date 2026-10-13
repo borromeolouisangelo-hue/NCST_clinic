@@ -84,7 +84,9 @@ class StockService
      * @param  string  $received  trimmed date_received, defaulted to today
      * @param  float|null  $unitCost  parsed unit_cost or null
      * @param  int  $staffId  authenticated staff user id ($request->user()->id)
-     * @return array{success: bool, errors: array<int, string>}
+     * @param  string  $receiptToken  per-render Stock In idempotency token; ''
+     *                                (the default) disables receipt tracking
+     * @return array{success: bool, duplicate: bool, receipt_id: int, errors: array<int, string>}
      */
     public function receive(
         int $mid,
@@ -96,6 +98,7 @@ class StockService
         string $received,
         ?float $cost,
         int $staffId,
+        string $receiptToken = '',
     ): array {
         $errors = [];
 
@@ -113,11 +116,21 @@ class StockService
         }
 
         if ($errors) {
-            return ['success' => false, 'errors' => $errors];
+            return ['success' => false, 'duplicate' => false, 'receipt_id' => 0, 'errors' => $errors];
+        }
+
+        $receiptToken = trim($receiptToken);
+        if ($receiptToken !== '' && DB::table('stock_receipts')->where('token', $receiptToken)->exists()) {
+            return ['success' => false, 'duplicate' => true, 'receipt_id' => 0, 'errors' => []];
         }
 
         DB::beginTransaction();
         try {
+            // The receipt row is claimed FIRST, inside the very same
+            // transaction as the batch merge: the stock increase and its
+            // once-only receipt commit or roll back together, so neither a
+            // notification failure nor a retried request can double-count.
+            $receiptId = $receiptToken !== '' ? $this->recordReceipt($receiptToken, $mid, $qty, $supId, $staffId) : 0;
             $existingBatch = DB::selectOne(
                 'SELECT id, quantity FROM medicine_batches
                  WHERE medicine_id = ?
@@ -179,14 +192,42 @@ class StockService
             }
             DB::commit();
 
-            return ['success' => true, 'errors' => []];
+            return ['success' => true, 'duplicate' => false, 'receipt_id' => $receiptId, 'errors' => []];
         } catch (\Throwable $ex) {
             if (DB::transactionLevel() > 0) {
                 DB::rollBack();
             }
             $errors[] = 'Stock could not be added. Please try again.';
 
-            return ['success' => false, 'errors' => $errors];
+            return ['success' => false, 'duplicate' => false, 'receipt_id' => 0, 'errors' => $errors];
         }
+    }
+
+    /**
+     * Claim one Stock In submission inside the caller's transaction.
+     *
+     * stock_receipts.token carries a UNIQUE index, so a concurrent second
+     * submission of the same form raises instead of increasing the stock
+     * twice; the transaction then rolls both back.
+     */
+    private function recordReceipt(string $token, int $mid, int $qty, ?int $supId, int $staffId): int
+    {
+        $row = DB::selectOne(
+            'SELECT CASE WHEN c.type = "first_aid" THEN "first_aid" ELSE "medicine" END AS item_type
+               FROM medicines m
+               LEFT JOIN medicine_categories c ON c.id = m.category_id
+              WHERE m.id = ? LIMIT 1',
+            [$mid],
+        );
+
+        return (int) DB::table('stock_receipts')->insertGetId([
+            'token' => $token,
+            'item_type' => $row->item_type ?? 'medicine',
+            'item_id' => $mid,
+            'quantity' => $qty,
+            'supplier_id' => $supId,
+            'staff_id' => $staffId,
+            'created_at' => date('Y-m-d H:i:s'),
+        ]);
     }
 }

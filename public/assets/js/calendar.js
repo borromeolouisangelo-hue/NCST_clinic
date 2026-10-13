@@ -1,44 +1,31 @@
-/* ========================================================================
-   School Clinic IMS - Dashboard Calendar (Feature 10)
-   ========================================================================
-   Compact interactive calendar showing clinic-related activities:
-   - Consultations (staff sees all, patients see own)
-   - Sick leaves (employees see own, staff/admin see all pending)
-   - Equipment return deadlines (borrowers see own, staff see all)
-   - Medicine dispensing (staff sees all)
-   ======================================================================== */
+
 
 (function () {
     'use strict';
 
-    document.addEventListener('DOMContentLoaded', function () {
-        var calendarEl = document.getElementById('dashboardCalendar');
-        if (!calendarEl) return;
+    /** Local yyyy-mm-dd (the old UTC-based version highlighted the wrong
+        day for viewers west of UTC after ~22:00 local time). */
+    function localDateString(date) {
+        var m = String(date.getMonth() + 1).padStart(2, '0');
+        var d = String(date.getDate()).padStart(2, '0');
+        return date.getFullYear() + '-' + m + '-' + d;
+    }
 
-        // Build the events array from data attributes on the calendar element
-        // Data is injected by the controller via the calendar partial
-        var events = [];
+    function parseEvents(calendarEl) {
         try {
-            events = JSON.parse(calendarEl.dataset.events || '[]');
+            return JSON.parse(calendarEl.dataset.events || '[]');
         } catch (e) {
             console.warn('Calendar: failed to parse events data', e);
+            return [];
         }
+    }
 
-        var calendar = new FullCalendar.Calendar(calendarEl, {
+    /** Shared options for every calendar instance. */
+    function baseOptions(calendarEl) {
+        return {
             initialView: 'dayGridMonth',
-            headerToolbar: {
-                left: 'prev,next today',
-                center: 'title',
-                right: 'dayGridMonth,dayGridWeek,listWeek'
-            },
-            buttonText: {
-                today: 'Today',
-                month: 'Month',
-                week: 'Week',
-                list: 'List'
-            },
             height: 'auto',
-            events: events,
+            events: parseEvents(calendarEl),
             eventTimeFormat: {
                 hour: '2-digit',
                 minute: '2-digit',
@@ -46,7 +33,7 @@
             },
             eventDisplay: 'block',
             eventDidMount: function (info) {
-                // Add tooltip with details
+                // Tooltip with details
                 var el = info.el;
                 var title = info.event.title;
                 var desc = info.event.extendedProps.description || '';
@@ -63,8 +50,8 @@
                 }
             },
             dayCellDidMount: function (info) {
-                // Highlight today
-                if (info.dateStr === new Date().toISOString().split('T')[0]) {
+                // Highlight today (local calendar day)
+                if (info.dateStr === localDateString(new Date())) {
                     info.el.classList.add('fc-today-highlight');
                 }
             },
@@ -74,11 +61,65 @@
                 if (type) classes.push('fc-type-' + type);
                 return classes;
             }
-        });
+        };
+    }
 
+    /** Merge the per-mode layout into the shared options. */
+    function buildOptions(calendarEl) {
+        var options = baseOptions(calendarEl);
+
+        if (calendarEl.dataset.mode === 'full') {
+            options.height = 'auto';
+
+            options.headerToolbar = {
+                left: 'prev,next today',
+                center: 'title',
+                right: 'dayGridMonth,dayGridWeek,listWeek'
+            };
+            options.buttonText = {
+                today: 'Today',
+                month: 'Month',
+                week: 'Week',
+                list: 'List'
+            };
+        } else {
+            // Compact fixed height; style.css mirrors 290px on the chart
+            // card body so the dashboard pair matches exactly.
+            options.height = 220;
+            options.expandRows = true;
+            options.headerToolbar = {
+                left: 'prev today',
+                center: 'title',
+                right: 'next'
+            };
+            options.displayEventTime = false;
+            options.dayMaxEvents = true;
+        }
+
+        return options;
+    }
+
+    function initCalendar(calendarEl) {
+        // Init-once guard: safe under script re-evaluation and multiple inclusions.
+        if (calendarEl.dataset.fcInitialized === '1') return;
+
+        // The CDN bundle failed to load - warn instead of throwing.
+        if (typeof FullCalendar === 'undefined') {
+            console.warn('Calendar: FullCalendar library is not available (CDN blocked or offline?).');
+            return;
+        }
+
+        calendarEl.dataset.fcInitialized = '1';
+
+        var calendar = new FullCalendar.Calendar(calendarEl, buildOptions(calendarEl));
         calendar.render();
 
-        // Expose calendar globally for debugging
-        window.clinicCalendar = calendar;
+        // First instance keeps the global debugging handle (back-compat).
+        window.clinicCalendar = window.clinicCalendar || calendar;
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        var calendarEls = document.querySelectorAll('.js-clinic-calendar[data-clinic-calendar]');
+        calendarEls.forEach(initCalendar);
     });
 })();

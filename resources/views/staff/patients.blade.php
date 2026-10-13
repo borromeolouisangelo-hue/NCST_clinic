@@ -5,24 +5,50 @@
 @section('content')
 @if ($patient)
     {{-- Profile branch - port of staff/patients.php lines 100-218: the Back
-         link and the overview cards. The original's Recent Consultations and
-         Recent Dispensed Medicines cards, plus the Overview / Visits and
-         dispensing pill nav that switched between them, were removed here as
-         a display cleanup - those records stay on /staff/consultations and
-         /staff/dispense. The list/search branch below only renders when no
-         ?id= profile matched, same if/else split as the original. --}}
+         link and the overview cards. The original's per-type Recent
+         Consultations / Recent Dispensed Medicines cards (and their pill
+         nav) are replaced by ONE Recent Activity card - the same 10-row
+         preview scope, merged across every activity family by
+         PatientActivityService, with the "View All Activities" button
+         opening the dedicated full-history page and each item's View
+         action opening the record's read-only detail page. The overview
+         is a two-column layout: profile + latest medical record in the
+         narrower left column, the stacked activity list filling the right
+         one (col-12 below the lg breakpoint, so smaller screens collapse
+         into one vertical stack). The list/search branch below only
+         renders when no ?id= profile matched, same if/else split as the
+         original. --}}
     <div class="mb-3">
         <a href="{{ url('staff/patients') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i> Back to patients</a>
     </div>
 
+
+ 
     <div class="row g-3 patient-profile-row">
-        <div class="col-lg-4">
+        <div class="col-12 col-lg-4">
             <div class="card mb-3" data-profile-tab-panel="overview">
                 <div class="card-header">Patient Information</div>
                 <div class="card-body">
-                    <h5 class="mb-1">{{ trim(($patient->first_name ?? '') . ' ' . ($patient->last_name ?? '')) }}</h5>
-                    <div class="text-muted small mb-2">{{ ucfirst($patient->account_type) }} &middot; {{ '@' . $patient->username }}</div>
-                    <dl class="row mb-0 small">
+                    {{-- Profile picture beside the patient's name and identity
+                         line - the patient's OWN stored photo (profiles.photo
+                         via resolvePatient's join, resolved by ProfilePhoto
+                         to the shared public path). Same circle size and
+                         default-avatar fallback as the Account Settings
+                         Profile tab: placeholder when there is no picture,
+                         and a placeholder swap if the file goes missing. --}}
+                    <div class="d-flex align-items-center gap-3">
+                        @if ($patientPhotoUrl)
+                            <img src="{{ $patientPhotoUrl }}" alt="{{ trim(($patient->first_name ?? '') . ' ' . ($patient->last_name ?? '')) }}" class="account-avatar account-avatar-lg" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex'">
+                            <span class="account-avatar account-avatar-lg account-avatar-empty" style="display:none"><i class="bi bi-person"></i></span>
+                        @else
+                            <span class="account-avatar account-avatar-lg account-avatar-empty"><i class="bi bi-person"></i></span>
+                        @endif
+                        <div>
+                            <h5 class="mb-1">{{ trim(($patient->first_name ?? '') . ' ' . ($patient->last_name ?? '')) }}</h5>
+                            <div class="text-muted small mb-0">{{ ucfirst($patient->account_type) }} &middot; {{ '@' . $patient->username }}</div>
+                        </div>
+                    </div>
+                    <dl class="row mb-0 small mt-2">
                         @if ($patient->account_type === 'student')
                             <dt class="col-5">Student No.</dt><dd class="col-7">{{ $patient->student_no ?: '—' }}</dd>
                             <dt class="col-5">Course</dt><dd class="col-7">{{ $patient->course ?: '—' }}</dd>
@@ -40,9 +66,7 @@
                     </dl>
                 </div>
             </div>
-        </div>
 
-        <div class="col-lg-8">
             <div class="card mb-3" data-profile-tab-panel="overview">
                 <div class="card-header">Latest Medical Record</div>
                 <div class="card-body">
@@ -50,23 +74,11 @@
                         <p class="text-muted mb-0">No medical record submitted yet.</p>
                     @else
                         <div class="row g-2 small">
-                            <div class="col-md-3"><strong>Blood Type:</strong> {{ $medRec->blood_type ?: '—' }}</div>
-                            <div class="col-md-3"><strong>Height:</strong> {{ $medRec->height_cm ?: '—' }} cm</div>
-                            <div class="col-md-3"><strong>Weight:</strong> {{ $medRec->weight_kg ?: '—' }} kg</div>
-                            <div class="col-md-3"><strong>Period:</strong> {{ $medRec->school_year . ' ' . $medRec->semester }}</div>
-                            <div class="col-12 mt-2"><strong>Allergies (free text):</strong> {{ $medRec->allergies_text ?: '—' }}</div>
-                            <div class="col-12"><strong>Existing Conditions:</strong> {{ $medRec->existing_conditions ?: '—' }}</div>
-                            <div class="col-12"><strong>Current Medications:</strong> {{ $medRec->current_medications ?: '—' }}</div>
-                            <div class="col-12"><strong>Immunizations:</strong> {{ $medRec->immunizations ?: '—' }}</div>
-                        </div>
-                    @endif
-                </div>
-            </div>
-
-            <div class="card mb-3" data-profile-tab-panel="overview">
-                <div class="card-header"><i class="bi bi-exclamation-triangle text-accent me-1"></i> Recorded Medicine Allergies</div>
-                <div class="card-body">
-                    @if (! $allergies->count())
+                            <div class="row-md-3"><strong>Blood Type:</strong> {{ $medRec->blood_type ?: '—' }}</div>
+                            <div class="row-md-3"><strong>Height:</strong> {{ $medRec->height_cm ?: '—' }} cm</div>
+                            <div class="row-md-3"><strong>Weight:</strong> {{ $medRec->weight_kg ?: '—' }} kg</div>
+                            <div class="row-md-3"><strong>Period:</strong> {{ $medRec->school_year . ' ' . $medRec->semester }}</div>
+                            <div class="row-12 mt-2"><strong>Allergies:</strong> @if (! $allergies->count())
                         <p class="text-muted mb-0">No linked allergies recorded.</p>
                     @else
                         <ul class="mb-0">
@@ -78,11 +90,60 @@
                                 </li>
                             @endforeach
                         </ul>
+                    @endif</div>
+                            <div class="col-12"><strong>Existing Conditions:</strong> {{ $medRec->existing_conditions ?: '—' }}</div>
+                            <div class="col-12"><strong>Current Medications:</strong> {{ $medRec->current_medications ?: '—' }}</div>
+                            <div class="col-12"><strong>Immunizations:</strong> {{ $medRec->immunizations ?: '—' }}</div>
+                        </div>
                     @endif
                 </div>
             </div>
         </div>
+
+        <div class="col-12 col-lg-8">
+            {{-- Recent Activity: the 10 newest activities across
+                 consultations, medicine dispensing, equipment loans,
+                 medical certificates and (employees only) sick leaves,
+                 newest first, through the shared PatientActivityService -
+                 one vertically stacked list item per activity carrying the
+                 icon, title, description, date/time, status badge and the
+                 View action opening the record's read-only page. The
+                 header button opens the dedicated full-history page. --}}
+            <div class="card mb-3" data-profile-tab-panel="overview">
+                <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <div><i class="bi bi-activity me-1"></i> Recent Activity</div>
+                    <a href="{{ url('staff/patient_activities?id=' . (int) $patient->id) }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-list-ul me-1"></i> View All Activities</a>
+                </div>
+                @if (! $recentActivities)
+                    <div class="card-body"><p class="text-muted text-center py-2 mb-0">No activities recorded yet.</p></div>
+                @else
+                    <ul class="list-group list-group-flush">
+                        @foreach ($recentActivities as $activity)
+                            <li class="list-group-item d-flex align-items-start gap-3">
+                                <i class="bi {{ $activity['icon'] }} fs-5 text-primary flex-shrink-0 mt-1"></i>
+                                <div class="flex-grow-1">
+                                    <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
+                                        <span class="fw-semibold">{{ $activity['label'] }}</span>
+                                        <small class="text-muted flex-shrink-0">{{ fmt_dt($activity['occurred_at'], 'M d, Y g:i A') }}</small>
+                                    </div>
+                                    <div class="text-muted">{{ $activity['description'] }}</div>
+                                    <div class="d-flex align-items-center gap-2 mt-2">
+                                        @if ($activity['status'])
+                                            <span class="badge {{ $activity['status']['badge'] }}">{{ $activity['status']['label'] }}</span>
+                                        @endif
+                                        @if ($activity['url'])
+                                            <a href="{{ $activity['url'] }}" class="btn btn-sm btn-outline-primary" title="View record"><i class="bi bi-eye"></i></a>
+                                        @endif
+                                    </div>
+                                </div>
+                            </li>
+                        @endforeach
+                    </ul>
+                @endif
+            </div>
+        </div>
     </div>
+
 @else
 <div class="row g-3">
     <div class="col-12">

@@ -418,10 +418,16 @@ class SickLeaveTest extends TestCase
     }
 
     // ---------------------------------------------------------------------
-    // List cap (original 66: LIMIT 100)
+    // Recent preview + module history (module histories feature)
     // ---------------------------------------------------------------------
 
-    public function test_list_is_capped_at_100_rows(): void
+    /**
+     * The queue previews the 10 newest requests; the complete history sits
+     * behind View All at /staff/history?tab=sick-leaves, paginated at the
+     * original's LIMIT 100 per page and rendered through the shared
+     * history-table partial (histLeaveModal details modals per row).
+     */
+    public function test_module_previews_10_newest_and_history_paginates_at_100(): void
     {
         $staff = $this->makeStaff();
         $emp = $this->makeEmployee('Bulk', 'Rows');
@@ -429,8 +435,57 @@ class SickLeaveTest extends TestCase
             $this->makeLeave($emp->id, "Row $i", '2026-10-01', null, 'pending');
         }
 
-        $body = $this->actingAs($staff)->get('/staff/sick_leaves')->assertOk()->getContent();
-        $this->assertSame(100, substr_count($body, 'id="leaveModal'), 'LIMIT 100 must render exactly 100 rows');
+        // Recent preview: 10 rows plus the View All link.
+        $module = $this->actingAs($staff)->get('/staff/sick_leaves')->assertOk();
+        $this->assertSame(10, substr_count($module->getContent(), 'id="leaveModal'), 'The queue previews 10 rows');
+        $module->assertSee(route('staff.history', ['tab' => 'sick-leaves']));
+
+        // History: shared table, 100 rows per page, back link + nav.
+        $page1 = $this->actingAs($staff)->get('/staff/history?tab=sick-leaves')->assertOk();
+        $this->assertSame(100, substr_count($page1->getContent(), 'id="histLeaveModal'), 'History page 1 must render 100 rows');
+        $page1->assertSee('Sick Leaves History')
+            ->assertSee('Sick Leaves history pagination', false);
+
+        $page2 = $this->actingAs($staff)->get('/staff/history?tab=sick-leaves&page=2')->assertOk();
+        $this->assertSame(5, substr_count($page2->getContent(), 'id="histLeaveModal'));
+    }
+
+    /**
+     * The history toolbar keeps the queue's status semantics: pending /
+     * approved / declined actually filter, junk collapses to 'all' for
+     * both the dropdown and the query, and the active status rides along
+     * in every pagination link.
+     */
+    public function test_history_status_filter_is_live_and_survives_pagination(): void
+    {
+        $staff = $this->makeStaff();
+        $emp = $this->makeEmployee('Bulk', 'Rows');
+        for ($i = 0; $i < 3; $i++) {
+            $this->makeLeave($emp->id, "Row $i", '2026-10-01', null, 'pending');
+        }
+        $this->makeLeave($emp->id, 'Approved one', '2026-10-01', null, 'approved');
+
+        $approved = $this->actingAs($staff)->get('/staff/history?tab=sick-leaves&status=approved')->assertOk();
+        $this->assertSame(1, substr_count($approved->getContent(), 'id="histLeaveModal'));
+        $approved->assertSee('Approved one')
+            ->assertSee('<option value="approved" selected>', false);
+
+        $junk = $this->actingAs($staff)->get('/staff/history?tab=sick-leaves&status=banana')->assertOk();
+        $this->assertSame(4, substr_count($junk->getContent(), 'id="histLeaveModal'));
+        $junk->assertSee('<option value="all" selected>', false);
+
+        // 105 pending: the filtered set paginates with the status kept in
+        // every page link.
+        for ($i = 3; $i < 105; $i++) {
+            $this->makeLeave($emp->id, "Row $i", '2026-10-01', null, 'pending');
+        }
+        $page1 = $this->actingAs($staff)->get('/staff/history?tab=sick-leaves&status=pending')->assertOk();
+        $this->assertSame(100, substr_count($page1->getContent(), 'id="histLeaveModal'));
+        $page1->assertSee('status=pending', false);
+
+        $page2 = $this->actingAs($staff)->get('/staff/history?tab=sick-leaves&status=pending&page=2')->assertOk();
+        $this->assertSame(5, substr_count($page2->getContent(), 'id="histLeaveModal'));
+        $page2->assertSee('status=pending', false);
     }
 
     // ---------------------------------------------------------------------

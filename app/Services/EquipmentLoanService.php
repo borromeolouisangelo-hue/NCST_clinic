@@ -5,91 +5,84 @@ namespace App\Services;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Staff equipment loan mutations - extracted verbatim from
- * App\Http\Controllers\Staff\EquipmentLoansController::index()
- * (Phase 4, Batch 2).
- *
- * The controller keeps HTTP concerns: the issue-form data reads (patients,
- * equipment, loan-limit setting), the ?status/?q/?page parsing and the
- * (dead) $where builder, the StaffHistory pagination, the redirect/flash
- * and view rendering. This service owns the mutation side:
- *
- *  - issue(): the borrow pipeline - three request validations (borrower
- *    selected, equipment selected, the single-item rule), the availability
- *    re-check ("Equipment not found." / "Not enough available units."),
- *    then the original DB::transaction holding the decrement, the loan
- *    insert (24h due) and the overdue-notification sweep call, in the
- *    original order with byte-identical error strings. Success returns a
- *    flag; the controller builds the redirect.
- *
- *  - overdueAlertCount(): the status-filter block - when the filter is
- *    'overdue' or 'all', the overdue COUNT and, when positive, the
- *    notification sweep (count-only=false); returns the count the view
- *    renders. Both queries keep their original shapes and positions.
- *
- *  - createOverdueLoanNotifications(): the legacy sweep, moved verbatim
- *    from the controller (idempotent 'OverdueLoanNotification' rows, dedup
- *    on data->>value LIKE, 'read' column, optional equipment scope,
- *    count-only mode). It is deliberately NOT merged with
- *    OverdueLoanNotifications::create() (Feature 2's 'overdue_loan' rows
- *    keyed on loan_id with is_read/title/message): the two write different
- *    row shapes for different consumers, so combining them would change
- *    persisted data. The consolidation here is structural - every
- *    equipment-loan mutation path now lives in this one service.
+ * Equipment loan mutations for staff/equipment_loans.php - the controller
+ * keeps request parsing, pagination and rendering; error strings stay
+ * byte-identical to the reference.
  */
 class EquipmentLoanService
 {
-    /**
-     * Run the borrow (issue) pipeline: validations -> availability check ->
-     * transaction (decrement + loan insert + overdue sweep).
-     *
-     * @return array{success: bool, errors: array<int, string>}
-     */
-    public function issue(int $borrowerId, int $equipmentId, int $quantity): array
+    // #region Issue / return pipeline
+
+    // Issue one equipment loan: validate, re-check stock, decrement + insert atomically
+    // <- POST do=issue (borrower, equipment, qty, notes) + issuer id | -> loan row, available_qty -1 | => audit_logs issue_loan
+    public function issue(int $borrowerId, int $equipmentId, int $quantity, string $notes = '', ?int $staffId = null): array
     {
         $errors = [];
 
         if ($borrowerId <= 0) {
-            $errors[] = 'Please select a borrower.';
+            $errors[] = 'Select a borrower.';
         }
         if ($equipmentId <= 0) {
-            $errors[] = 'Please select equipment.';
+            $errors[] = 'Select equipment.';
         }
         if ($quantity !== 1) {
             $errors[] = 'Equipment requests are limited to 1 item per request.';
         }
 
         if (! $errors) {
-            $eq = DB::table('equipment')->where('id', $equipmentId)->limit(1)->first();
+            $eq = DB::table('equipment')->where('id', $equipmentId)->where('is_active', 1)->limit(1)->first();
             if (! $eq) {
-                $errors[] = 'Equipment not found.';
+                $errors[] = 'Selected equipment is unavailable.';
             } elseif ((int) ($eq->available_qty ?? 0) < $quantity) {
                 $errors[] = 'Not enough available units.';
+            } elseif ($quantity > (int) ($eq->total_qty ?? 0)) {
+                $errors[] = 'Requested quantity cannot exceed total stock.';
             }
         }
 
         if (! $errors) {
-            DB::transaction(function () use ($borrowerId, $equipmentId, $quantity, &$errors) {
-                $now = now();
-                $due = date('Y-m-d H:i:s', strtotime($now.' + 24 hours'));
+            try {
+                $loanId = (int) DB::transaction(function () use ($borrowerId, $equipmentId, $quantity, $notes, $staffId) {
+                    $now = now();
+                    $due = date('Y-m-d', strtotime($now.' + 24 hours'));
 
-                DB::table('equipment')
-                    ->where('id', $equipmentId)
-                    ->update(['available_qty' => DB::raw('available_qty - '.$quantity)]);
+                    $updated = DB::table('equipment')
+                        ->where('id', $equipmentId)
+                        ->where('available_qty', '>=', $quantity)
+                        ->where('is_active', 1)
+                        ->update(['available_qty' => DB::raw('available_qty - '.$quantity)]);
 
-                DB::table('equipment_loans')->insert([
-                    'user_id' => $borrowerId,
-                    'equipment_id' => $equipmentId,
-                    'quantity' => $quantity,
-                    'borrow_date' => $now,
-                    'due_date' => $due,
-                    'status' => 'borrowed',
-                ]);
+                    if ($updated !== 1) {
+                        throw new \RuntimeException('Not enough available units.');
+                    }
 
-                // Feature 18: Post-migration - create overdue notifications
-                // after 24h timeout
-                $this->createOverdueLoanNotifications($equipmentId);
-            });
+                    return (int) DB::table('equipment_loans')->insertGetId([
+                        'user_id' => $borrowerId,
+                        'equipment_id' => $equipmentId,
+                        'quantity' => $quantity,
+                        'borrow_date' => date('Y-m-d'),
+                        'borrowed_at' => $now,
+                        'due_date' => $due,
+                        'status' => 'borrowed',
+                        'notes' => $notes,
+                        'issued_by' => $staffId,
+                    ]);
+                });
+            } catch (\RuntimeException $ex) {
+                if ($ex->getMessage() !== 'Not enough available units.') {
+                    throw $ex;
+                }
+
+                return ['success' => false, 'errors' => ['Not enough available units.']];
+            }
+
+            AuditLogger::log(
+                $staffId,
+                'issue_loan',
+                'equipment_loans',
+                $loanId,
+                "Issued equipment #{$equipmentId} to user #{$borrowerId}",
+            );
 
             return ['success' => true, 'errors' => []];
         }
@@ -97,15 +90,45 @@ class EquipmentLoanService
         return ['success' => false, 'errors' => $errors];
     }
 
-    /**
-     * The status-filter overdue block: count overdue loans and sweep their
-     * notifications when the filter shows them (and the count is positive).
-     *
-     * @param  string|array  $statusFilter  raw ?status= value (a non-string
-     *                                      never matches the two literals,
-     *                                      exactly like the original === checks)
-     * @return int the count rendered as overdueCount
-     */
+    // Return a borrowed unit: restore stock and close the loan, only once
+    // <- POST do=return + receiver id | -> status=returned, available_qty +qty | => audit_logs return_loan
+    public function returnLoan(int $loanId, int $staffId): array
+    {
+        $loan = DB::table('equipment_loans')->where('id', $loanId)->limit(1)->first();
+
+        if ($loan && $loan->status === 'borrowed') {
+            DB::transaction(function () use ($loan, $staffId) {
+                DB::table('equipment')
+                    ->where('id', $loan->equipment_id)
+                    ->update(['available_qty' => DB::raw('available_qty + '.(int) $loan->quantity)]);
+
+                DB::table('equipment_loans')->where('id', $loan->id)->update([
+                    'status' => 'returned',
+                    'return_date' => date('Y-m-d'),
+                    'received_by' => $staffId,
+                ]);
+            });
+
+            AuditLogger::log(
+                $staffId,
+                'return_loan',
+                'equipment_loans',
+                (int) $loan->id,
+                "Returned loan #{$loan->id}",
+            );
+
+            return ['status' => 'success', 'message' => 'Equipment returned.'];
+        }
+
+        return ['status' => 'danger', 'message' => 'Loan not found or already returned.'];
+    }
+
+    // #endregion
+
+    // #region Overdue badge
+
+    // Overdue loan count for the status filter (0 unless overdue/all); notifications sweep elsewhere
+    // <- raw ?status= value | -> int badge count
     public function overdueAlertCount(string|array $statusFilter): int
     {
         $overdueCount = 0;
@@ -114,56 +137,10 @@ class EquipmentLoanService
                 ->where('status', 'borrowed')
                 ->where('borrowed_at', '<=', DB::raw('SUBDATE(NOW(), 1)'))
                 ->count();
-            if ($overdueCount > 0) {
-                $this->createOverdueLoanNotifications(
-                    null, // no specific equipment id needed
-                    false // don't double-count
-                );
-            }
         }
 
         return $overdueCount;
     }
 
-    /**
-     * Create overdue loan notifications (idempotent).
-     */
-    private function createOverdueLoanNotifications($equipmentId = null, $countOnly = true)
-    {
-        $query = DB::table('equipment_loans')
-            ->where('status', 'borrowed')
-            ->where('borrowed_at', '<=', DB::raw('SUBDATE(NOW(), 1)'));
-
-        if ($equipmentId) {
-            $query->where('equipment_id', $equipmentId);
-        }
-
-        $overdueLoans = $query->get();
-
-        if ($countOnly) {
-            return count($overdueLoans);
-        }
-
-        foreach ($overdueLoans as $loan) {
-            // Check if notification already exists (idempotent)
-            $existing = DB::table('notifications')
-                ->where('user_id', $loan->user_id)
-                ->where('type', 'OverdueLoanNotification')
-                ->where('data', '->>value', 'like', "%{$loan->id}%")
-                ->exists();
-
-            if (! $existing) {
-                DB::table('notifications')->insert([
-                    'user_id' => $loan->user_id,
-                    'type' => 'OverdueLoanNotification',
-                    'data' => json_encode(['loan_id' => $loan->id]),
-                    'read' => false,
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ]);
-            }
-        }
-
-        return count($overdueLoans);
-    }
+    // #endregion
 }

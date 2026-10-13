@@ -192,6 +192,21 @@ class StaffHistoryTest extends TestCase
             $table->timestamp('processed_at')->nullable();
         });
 
+        // The Inventory tab reads the deduction log, so it needs the
+        // movement ledger behind the medicine side of the union.
+        Schema::create('stock_movements', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('medicine_id');
+            $table->unsignedBigInteger('batch_id')->nullable();
+            $table->string('type', 4);
+            $table->integer('quantity');
+            $table->string('reason', 255)->nullable();
+            $table->string('ref_type', 40)->nullable();
+            $table->unsignedBigInteger('ref_id')->nullable();
+            $table->unsignedBigInteger('performed_by')->nullable();
+            $table->dateTime('created_at')->useCurrent();
+        });
+
         Schema::create('equipment', function (Blueprint $table) {
             $table->id();
             $table->string('name', 150);
@@ -454,9 +469,18 @@ class StaffHistoryTest extends TestCase
         $this->assertStringContainsString("\n                    1 record", $rejected->getContent());
     }
 
-    public function test_inventory_item_type_filter(): void
+    /**
+     * The Inventory tab is the DEDUCTION LOG - the destination of the
+     * Inventory screen's View Deduction Logs action - not the stock
+     * snapshot the dashboard previews. It carries the six required columns
+     * in order, lists real deductions from BOTH stock systems (medicine OUT
+     * movements and loan events), and its Type dropdown narrows between
+     * them while its Date dropdown narrows the window.
+     */
+    public function test_inventory_tab_is_the_deduction_log_with_its_type_and_date_filters(): void
     {
         $staff = $this->makeStaff();
+        $borrower = $this->makePatient(1);
         $aidCat = $this->makeCategory('Wound Care', 'first_aid');
         $medCat = $this->makeCategory('Analgesics', 'medicine');
         $gauze = DB::table('medicines')->insertGetId([
@@ -471,21 +495,60 @@ class StaffHistoryTest extends TestCase
             ['medicine_id' => $gauze, 'quantity' => 10, 'date_received' => date('Y-m-d')],
             ['medicine_id' => $aspirin, 'quantity' => 20, 'date_received' => date('Y-m-d')],
         ]);
+        DB::table('stock_movements')->insert([
+            ['medicine_id' => $gauze, 'type' => 'OUT', 'quantity' => 3, 'reason' => 'Wound care'],
+            ['medicine_id' => $aspirin, 'type' => 'OUT', 'quantity' => 5, 'reason' => 'Fever'],
+            // Receiving stock is not a deduction, so an IN row never appears.
+            ['medicine_id' => $gauze, 'type' => 'IN', 'quantity' => 10, 'reason' => 'Restock batch'],
+        ]);
+        $crutches = $this->makeEquipment('Crutches');
+        $this->makeLoan($borrower, $crutches, 2, date('Y-m-d'), date('Y-m-d H:i:s'));
 
+        // All: both systems, the six required figures, and the log's own
+        // second dropdown (the date window) beside the Type one.
         $all = $this->actingAs($staff)->get('/staff/history?tab=inventory');
         $all->assertOk();
         $all->assertSee('<i class="bi bi-box-seam me-1"></i> Inventory History</div>', false);
-        $all->assertSee('<th class="text-end">Total Pieces</th>', false);
-        $all->assertSee('Gauze Pad');
-        $all->assertSee('Aspirin');
-        $this->assertStringContainsString("\n                    2 records", $all->getContent());
+        $all->assertSee('>Total Stock</th>', false)
+            ->assertSee('<th>Unit</th>', false)
+            ->assertSee('>Quantity Deducted</th>', false)
+            ->assertSee('>Total Pieces Remaining</th>', false);
+        $all->assertSee('<select id="historyFilter2" name="filter"', false)
+            ->assertSee('All Dates');
+        $all->assertSee('Gauze Pad')
+            ->assertSee('Aspirin')
+            ->assertSee('Crutches')
+            ->assertDontSee('Restock batch', false);
+        $this->assertStringContainsString("\n                    3 records", $all->getContent());
 
-        $aid = $this->actingAs($staff)->get('/staff/history?tab=inventory&item_type=first_aid');
-        $aid->assertOk();
-        $aid->assertSee('<option value="first_aid" selected>First Aid</option>', false);
-        $aid->assertSee('Gauze Pad');
-        $aid->assertDontSee('Aspirin');
-        $this->assertStringContainsString("\n                    1 record", $aid->getContent());
+        // The Medicine option narrows to the two OUT movements.
+        $med = $this->actingAs($staff)->get('/staff/history?tab=inventory&type=medicine');
+        $med->assertOk();
+        $med->assertSee('<option value="medicine" selected>Medicine</option>', false);
+        $med->assertSee('Gauze Pad')
+            ->assertSee('Aspirin')
+            ->assertDontSee('Crutches');
+        $this->assertStringContainsString("\n                    2 records", $med->getContent());
+
+        // The Equipment option narrows to the loan event.
+        $eq = $this->actingAs($staff)->get('/staff/history?tab=inventory&type=equipment');
+        $eq->assertOk();
+        $eq->assertSee('<option value="equipment" selected>Equipment</option>', false);
+        $eq->assertSee('Crutches')
+            ->assertDontSee('Gauze Pad');
+        $this->assertStringContainsString("\n                    1 record", $eq->getContent());
+
+        // A junk value collapses to "all" for both the dropdown and the query.
+        $junk = $this->actingAs($staff)->get('/staff/history?tab=inventory&type=first_aid');
+        $junk->assertOk();
+        $junk->assertSee('<option value="all" selected>All Types</option>', false);
+        $this->assertStringContainsString("\n                    3 records", $junk->getContent());
+
+        // The date window is a live second filter with its own options.
+        $today = $this->actingAs($staff)->get('/staff/history?tab=inventory&filter=today');
+        $today->assertOk();
+        $today->assertSee('<option value="today" selected>Today</option>', false);
+        $this->assertStringContainsString("\n                    3 records", $today->getContent());
     }
 
     public function test_equipment_loan_status_filters_including_overdue_and_junk(): void

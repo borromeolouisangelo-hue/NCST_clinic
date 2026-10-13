@@ -2,13 +2,10 @@
 
 use App\Http\Controllers\Admin\AdminAuditLogsController;
 use App\Http\Controllers\Admin\AdminBackupController;
-use App\Http\Controllers\Admin\AdminCategoriesController;
 use App\Http\Controllers\Admin\AdminReportsController;
 use App\Http\Controllers\Admin\AdminSettingsController;
-use App\Http\Controllers\Admin\AdminSuppliersController;
 use App\Http\Controllers\Admin\AdminUsersController;
-use App\Http\Controllers\Admin\EquipmentController;
-use App\Http\Controllers\Admin\MedicineController;
+use App\Http\Controllers\Admin\InventoryRequestsController;
 use App\Http\Controllers\Api\NotificationApiController;
 use App\Http\Controllers\Api\NotificationSseController;
 use App\Http\Controllers\Api\ProcessNotificationQueueController;
@@ -162,6 +159,21 @@ Route::middleware(['auth', 'role:staff'])->group(function () {
     /** staff/patients.php - list, search/filter, and ?id= profile view. */
     Route::get('/staff/patients', [PatientController::class, 'index'])->name('staff.patients');
 
+    /**
+     * Patient Activity History - the profile overview's "View All
+     * Activities" button: the full combined activity feed of one patient
+     * (?id= + q / type / page), read-only, same staff-only guard.
+     */
+    Route::get('/staff/patient_activities', [PatientController::class, 'activities'])->name('staff.patient_activities');
+
+    /**
+     * Read-only activity detail - the View action of the Recent Activity
+     * list and the activity history page: ONE existing record of ONE
+     * activity family (?type= + ?id=), patient ownership enforced in the
+     * fetch, same staff-only guard.
+     */
+    Route::get('/staff/patient_activity_detail', [PatientController::class, 'activityDetail'])->name('staff.patient_activity_detail');
+
     /** staff/patient_register.php - register form + self-posted create. */
     Route::get('/staff/patient_register', [PatientController::class, 'create'])->name('staff.patients.register');
     Route::post('/staff/patient_register', [PatientController::class, 'store']);
@@ -189,6 +201,17 @@ Route::middleware(['auth', 'role:user'])
     ->get('/user/my_consultations', [ConsultationController::class, 'myConsultations'])
     ->name('user.my_consultations');
 
+/**
+ * Consultation attachment images - streamed from the PRIVATE local disk
+ * through this authorized route (never a public URL). The role middleware
+ * cannot be used (one URL serves both roles), so the controller enforces
+ * it: staff may view any consultation's images, a patient only their own.
+ */
+Route::middleware(['auth'])
+    ->get('/consultations/{id}/attachments/{type}', [ConsultationController::class, 'attachment'])
+    ->whereNumber('id')
+    ->name('consultations.attachment');
+
 /*
 |--------------------------------------------------------------------------
 | Certificates (Phase 12) - staff/certificates.php + user/my_certificates.php
@@ -196,13 +219,15 @@ Route::middleware(['auth', 'role:user'])
 |
 | The staff page is a single self-posting endpoint: issue, ?action=delete
 | and the list all live behind GET|POST on one URL, in the original's exact
-| order (a failed POST falls through to the list render). The user page is
-| a plain GET behind role:user; its ?print= re-checks ownership in SQL like
-| the original, while the staff ?print= does not (no check exists there).
+| order (a failed POST falls through to the list render). The staff page's
+| certificate fetch is now ?view= (View replaces Print: the certificate
+| renders read-only and never triggers the browser print dialog); the user
+| page is a plain GET behind role:user whose ?print= re-checks ownership in
+| SQL like the original, while the staff ?view= does not (no check exists).
 |
 */
 
-/** staff/certificates.php - issue + list + print + delete. */
+/** staff/certificates.php - issue + list + view + delete. */
 Route::middleware(['auth', 'role:staff'])
     ->match(['get', 'post'], '/staff/certificates', [CertificateController::class, 'index'])
     ->name('staff.certificates');
@@ -232,7 +257,7 @@ Route::middleware(['auth', 'role:staff'])
 
 /*
 |--------------------------------------------------------------------------
-| Medicine (Phase 14) - admin/medicines.php + staff/dispense.php
+| Medicine (Phase 14) - staff/dispense.php
 |--------------------------------------------------------------------------
 |
 | Both originals call require_login with a single role, so both live behind
@@ -241,6 +266,12 @@ Route::middleware(['auth', 'role:staff'])
 | to the same GET rendering on validation errors); delete and edit ride the
 | ?action= query contract exactly like the reference.
 |
+| RETIRED: the admin/medicines.php catalog CRUD route is no longer registered.
+| Staff create new medicines through the Inventory approval workflow
+| (admin/inventory_requests) and restock the existing ones from the staff
+| Inventory page; App\Services\AdminMedicineService - the mutation layer that
+| page used - is still reused verbatim when a request is approved.
+|
 | The two compatibility stubs check no request method (require_login, flash,
 | redirect - in that order), so both accept GET and POST and redirect through
 | their target route with the original info message. The message is flashed
@@ -248,11 +279,6 @@ Route::middleware(['auth', 'role:staff'])
 | (write-only legacy slot - see partials/flash.blade.php).
 |
 */
-
-/** admin/medicines.php - catalog CRUD (self-posting) + ?action=delete/edit. */
-Route::middleware(['auth', 'role:admin'])
-    ->match(['get', 'post'], '/admin/medicines', [MedicineController::class, 'index'])
-    ->name('admin.medicines');
 
 /** staff/dispense.php - walk-in dispensing with allergy override (self-posting). */
 Route::middleware(['auth', 'role:staff'])
@@ -270,7 +296,7 @@ Route::middleware(['auth', 'role:staff'])
 Route::middleware(['auth', 'role:user'])
     ->match(['get', 'post'], '/user/request_medicine', fn () => redirect()
         ->route('user.dashboard')
-        ->with('info', 'Please visit the clinic. Staff will enter your medicine request.'))
+        ->with('info', 'Please visit the clinic. Staff will enter your medicine request. One request per tablet or capsule medicine per day. Other eligible medicines may be requested separately. First-aid supplies and other non-tablet/capsule items are not subject to this restriction.'))
     ->name('user.request_medicine');
 
 /*
@@ -286,9 +312,14 @@ Route::middleware(['auth', 'role:user'])
 | target route with the original info message (written but never
 | rendered - write-only legacy slot, see partials/flash.blade.php).
 |
-| Post-migration removal: staff/deduction_logs (a plain GET, no writes)
-| and its controller, view and nav entries were taken out - Transaction
-| History covers those records.
+| Inventory Deduction Logs feature: the log has no route of its own - the
+| Inventory screen's View Deduction Logs button opens the existing
+| Transaction History page with its Inventory section selected
+| (/staff/history?tab=inventory), where StaffHistoryController serves the
+| log's rows, filters and pagination from StockLogQueries (both stock
+| systems' real deductions: medicine OUT movements + equipment loan and
+| return events). No sidebar entry was added; the legacy stock_adjust /
+| history_logs URLs still redirect through their original info messages.
 |
 */
 
@@ -296,6 +327,18 @@ Route::middleware(['auth', 'role:user'])
 Route::middleware(['auth', 'role:staff'])
     ->match(['get', 'post'], '/staff/inventory', [InventoryController::class, 'index'])
     ->name('staff.inventory');
+
+/**
+ * admin/inventory_requests.php - the approval queue for new inventory
+ * records (medicine / first aid item, equipment, category, supplier).
+ * Self-posting like the Sick Leaves review queue: GET renders the list and
+ * the ?view=request&id= details modal, POST with do=review approves or
+ * declines (with a required rejection reason). Only an approval creates the
+ * active record, and it does so exactly once.
+ */
+Route::middleware(['auth', 'role:admin'])
+    ->match(['get', 'post'], '/admin/inventory_requests', [InventoryRequestsController::class, 'index'])
+    ->name('admin.inventory_requests');
 
 /** staff/stock_adjust.php - stub: flash + redirect to unified inventory. */
 Route::middleware(['auth', 'role:staff'])
@@ -313,7 +356,7 @@ Route::middleware(['auth', 'role:staff'])
 
 /*
 |--------------------------------------------------------------------------
-| Equipment (Phase 16) - admin/equipment.php + staff/equipment_loans.php
+| Equipment (Phase 16) - staff/equipment_loans.php
 |--------------------------------------------------------------------------
 |
 | Both originals are single self-posting endpoints behind require_login
@@ -325,6 +368,12 @@ Route::middleware(['auth', 'role:staff'])
 | issue and return off POST (its own CSRF check maps to 419) before the
 | status-filtered list renders.
 |
+| RETIRED: the admin/equipment.php catalog CRUD route is no longer
+| registered. New equipment now enters the catalogue through the Inventory
+| approval workflow (admin/inventory_requests) and restocks run off the staff
+| Inventory page's Stock In modal; EquipmentStockService and every loan /
+| return behaviour it guards are untouched.
+|
 | The two user URLs are method-blind compatibility stubs - require_login,
 | flash, redirect, in that order - so both accept GET and POST and carry
 | the original info message (written but never rendered: write-only
@@ -333,11 +382,6 @@ Route::middleware(['auth', 'role:staff'])
 | today.
 |
 */
-
-/** admin/equipment.php - equipment CRUD (self-posting) + ?action=delete/edit. */
-Route::middleware(['auth', 'role:admin'])
-    ->match(['get', 'post'], '/admin/equipment', [EquipmentController::class, 'index'])
-    ->name('admin.equipment');
 
 /** staff/equipment_loans.php - issue + return + status-filtered loan list. */
 Route::middleware(['auth', 'role:staff'])
@@ -380,13 +424,17 @@ Route::middleware(['auth', 'role:user'])
 | History (Phase 18) - staff/history.php
 |--------------------------------------------------------------------------
 |
-| Full, unbounded seven-section history behind require_login(['staff']).
-| ?tab= picks the section (unknown keys fall back to the first - patients);
-| the shared StaffHistory builders the dashboard already previews with
-| render rows and tables, so preview and full history can never drift.
-| Read-only GET page (its form is a GET form); a token-less POST raises
-| 419 via the global middleware - approved Phase 6 strengthening, the
-| reference ignores POST entirely.
+| The ONE destination every Staff module's View All action opens, behind
+| require_login(['staff']). ?tab= picks the section (unknown keys fall
+| back to the first - patients); the shared StaffHistory builders the
+| dashboard already previews with render rows and tables, so preview and
+| full history can never drift. Every section is paginated server-side
+| (StaffHistory::perPage) with the active search and filters carried into
+| the page links, and the Inventory section is the deduction log served
+| from StockLogQueries (both stock systems' real deductions). Read-only
+| GET page (its form is a GET form); a token-less POST raises 419 via the
+| global middleware - approved Phase 6 strengthening, the reference
+| ignores POST entirely.
 |
 */
 
@@ -615,46 +663,20 @@ Route::middleware(['auth', 'role:admin'])
 
 /*
 |--------------------------------------------------------------------------
-| Medicine Categories (Phase 25) - admin/categories.php
+| Medicine Categories (Phase 25) & Suppliers (Phase 26) - RETIRED
 |--------------------------------------------------------------------------
 |
-| One URL behind role:admin: GET list/search + legacy ?action=delete (PRG
-| redirect here, unlike admin/users.php's fall-through) + ?action=edit
-| (modal renders CLOSED with prefills - the reference has no reopen script
-| for it). POST save does the required-name check, the per-type duplicate
-| check and the insert/update with PRG. The toolbar's type select submits
-| ?type=... but the reference SQL never filters on it - only the raw
-| selected-state reads it. The reference form carries no token and the page
-| runs no CSRF check; the view carries @csrf and the middleware answers 419
-| otherwise (approved Phase 6 strengthening). Browser QA never sends a valid
-| token: a successful save would write live medicine_categories.
+| Neither admin/categories.php nor admin/suppliers.php is registered any
+| more. Staff create a new category or a new supplier by submitting an
+| inventory request from the staff Inventory page; the admin approves it on
+| admin/inventory_requests and the record is created there - through
+| App\Services\AdminCategoryService and App\Services\AdminSupplierService,
+| the very mutation layers these two pages used, unchanged down to their
+| validation messages and audit rows. Restocking an existing item still
+| picks its supplier straight off the suppliers table from the Stock In
+| modal, so nothing else was removed.
 |
 */
-
-/** admin/categories.php - medicine category management (list/create/edit/delete). */
-Route::middleware(['auth', 'role:admin'])
-    ->match(['get', 'post'], '/admin/categories', [AdminCategoriesController::class, 'index'])
-    ->name('admin.categories');
-
-/*
-|--------------------------------------------------------------------------
-| Suppliers (Phase 26) - admin/suppliers.php
-|--------------------------------------------------------------------------
-|
-| Same single-URL shape as admin/categories.php: GET list/search over five
-| columns + legacy ?action=delete (PRG) + ?action=edit (closed-modal
-| prefills); POST save validates ONLY that the name is present - the
-| reference has no duplicate check here. The reference form carries no token
-| and the page runs no CSRF check; the view carries @csrf and the middleware
-| answers 419 otherwise (approved Phase 6 strengthening). Browser QA never
-| sends a valid token: a successful save would write live suppliers.
-|
-*/
-
-/** admin/suppliers.php - supplier management (list/create/edit/delete). */
-Route::middleware(['auth', 'role:admin'])
-    ->match(['get', 'post'], '/admin/suppliers', [AdminSuppliersController::class, 'index'])
-    ->name('admin.suppliers');
 
 /*
 |--------------------------------------------------------------------------

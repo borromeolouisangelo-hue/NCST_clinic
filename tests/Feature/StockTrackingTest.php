@@ -243,9 +243,11 @@ class StockTrackingTest extends TestCase
 
         $response = $this->actingAs($staff)->get('/staff/inventory');
         $response->assertOk()
-            ->assertSee('>11/12 deducted</span>', false)   // quantitative: package position
-            ->assertSee('>0/12 deducted</span>', false)    // fresh package, nothing deducted
-            ->assertSee('>6</span>', false)                // no package size: plain count
+            // The tracking state now renders under Quantity / Stock (the old
+            // Total Pieces column is gone), so each is a small sub-line.
+            ->assertSee('>11/12 deducted</small>', false)   // quantitative: package position
+            ->assertSee('>0/12 deducted</small>', false)    // fresh package, nothing deducted
+            ->assertSee('>6</small>', false)                // no package size: plain count
             ->assertDontSee('Fill level', false)
             ->assertDontSee('value="full"', false)          // old level buttons gone
             ->assertDontSee('value="half"', false)
@@ -268,9 +270,9 @@ class StockTrackingTest extends TestCase
 
         $response = $this->actingAs($staff)->get('/staff/inventory');
         $response->assertOk()
-            ->assertSee('>1/9 opened</span>', false)    // opened / total
-            ->assertSee('>1/4 opened</span>', false)
-            ->assertSee('>0/16 opened</span>', false);  // fresh, nothing opened
+            ->assertSee('>1/9 opened</small>', false)    // opened / total
+            ->assertSee('>1/4 opened</small>', false)
+            ->assertSee('>0/16 opened</small>', false);  // fresh, nothing opened
     }
 
     public function test_dispense_form_renders_tracking_json_and_controls_without_fill_level(): void

@@ -27,11 +27,17 @@ class ProfilePhoto
     /** Picture directory, relative to public/. */
     public const DIRECTORY = 'assets/images/profiles';
 
-    /** Extensions `image` validation accepts (server-guessed, never client). */
-    public const EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'];
+    /** Extensions upload validation accepts (content-sniffed, never client). */
+    public const EXTENSIONS = ['jpg', 'jpeg', 'png'];
 
-    /** Upload ceiling in kilobytes. */
+    /** Upload ceiling in kilobytes (2 MB). */
     public const MAX_KILOBYTES = 2048;
+
+    /** Smallest picture that still makes a usable avatar, per side. */
+    public const MIN_DIMENSION = 64;
+
+    /** Largest picture accepted per side - guards decompression bombs. */
+    public const MAX_DIMENSION = 6000;
 
     /**
      * Public URL of a stored picture, or '' when there is no usable one.
@@ -77,11 +83,14 @@ class ProfilePhoto
 
         File::ensureDirectoryExists(dirname($target), 0755, true);
 
-        // rename() first (the request's temp file is on the same volume
-        // here); fall back to a copy so an upload is never silently lost.
-        if (! @rename($file->getPathname(), $target)) {
-            copy($file->getPathname(), $target);
-        }
+        // Copy rather than rename: a rename carries the upload's own open
+        // handle onto the target, and on Windows a later unlink of that
+        // name then sits in delete-pending until every handle closes -
+        // making every later write to the same name fail with Permission
+        // denied (deterministically hit by the feature tests, and possible
+        // for any long-lived worker in production). The temp source is
+        // cleaned up by PHP for real uploads and by the GC for test fakes.
+        copy($file->getPathname(), $target);
 
         return $filename;
     }

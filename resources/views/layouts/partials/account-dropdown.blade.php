@@ -1,7 +1,7 @@
 <div class="dropdown ms-2">
             <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
                 @if ($shell->photoUrl !== '')
-                    <img src="{{ $shell->photoUrl }}" alt="{{ $shell->fullName }}" class="account-avatar">
+                    <img src="{{ $shell->photoUrl }}" alt="{{ $shell->fullName }}" class="account-avatar" onerror="this.outerHTML='<i class=\'bi bi-person-circle\'></i>'">
                 @else
                     <i class="bi bi-person-circle"></i>
                 @endif

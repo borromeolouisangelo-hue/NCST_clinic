@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Staff;
 
 use App\Http\Controllers\Controller;
 use App\Services\EquipmentLoanService;
+use App\Services\OverdueLoanNotifications;
 use App\Services\StaffHistory;
 use App\Support\ShellContext;
 use Illuminate\Http\RedirectResponse;
@@ -12,42 +13,31 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\View\View;
 
 /**
- * Staff equipment loans - port of staff/equipment_loans.php (read-only
- * reference).
- *
- * require_login(['staff']) becomes ['auth', 'role:staff'] route middleware;
- * the custom CSRF failure branch (flash + redirect) is Laravel's 419
- * (approved Phase 6 difference), which also covers both POST actions the
- * reference guards with its token check.
- *
- * Order matches the reference exactly:
- *
- *  - create_overdue_loan_notifications() runs first (idempotent, only
- *    loans with a past due_date can write - see OverdueLoanNotifications);
- *  - the issue POST validates borrower/equipment/quantity !== 1 (the
- *    single-item rule), re-checks stock, then inside a transaction takes
- *    the conditional UPDATE ... available_qty >= ? - a rowCount miss rolls
- *    back with "Not enough available units." - and inserts the loan with
- *    a 24-hour timeout - see create_overdue_loan_notifications();
- *  - all borrow, return, overdue logic mirrors the reference;
- *  - Post-migration addition: history pagination via StaffHistory.
- *
- * Phase 4 (Batch 2): the issue pipeline (validations, availability check,
- * create transaction) and the overdue-notification sweep (including the
- * controller's former createOverdueLoanNotifications helper) moved into
- * App\Services\EquipmentLoanService, injected below - this method keeps
- * form data, pagination and rendering.
+ * Staff equipment loans page - port of staff/equipment_loans.php; request
+ * parsing and rendering here, mutations in EquipmentLoanService.
  */
 class EquipmentLoansController extends Controller
 {
+    // #region Wiring
+
+    // Loan mutations injected; this class only parses requests and renders
     public function __construct(protected EquipmentLoanService $equipmentLoanService) {}
 
+    // #endregion
+
+    // #region Equipment loans page
+
+    // Serve the loans page: overdue sweep first, then issue/return POSTs, then the filtered 10-row preview
+    // <- GET ?status/?q, POST do=issue|do=return | -> view or redirect+flash | => overdue_loan notifications
     public function index(Request $request): View|RedirectResponse
     {
-        $errors = [];
-        $statusFilter = $request->query('status') ?? 'borrowed';
+        OverdueLoanNotifications::create();
 
-        // ---- Issue form (original lines 31-83) -----------------------------
+        $errors = [];
+        // Default 'all' matches the view's lowercase compare (its "All"
+        // option), so the unfiltered page lists every status.
+        $statusFilter = $request->query('status') ?? 'all';
+
         $patients = DB::select(
             "SELECT u.id, CONCAT(p.first_name,' ',p.last_name) AS full_name,
                     u.username, sd.student_no, ed.employee_no
@@ -61,27 +51,34 @@ class EquipmentLoansController extends Controller
         $equipment = DB::select('SELECT * FROM equipment WHERE is_active=1 ORDER BY name');
         $defaultLoanLimit = get_setting_int('default_equipment_loan_limit', 5);
 
-        // ---- Issue form POST (original lines 85-97): field reads stay
-        // here; the validations, availability re-check and the create
-        // transaction moved into App\Services\EquipmentLoanService
-        // (Phase 4, Batch 2). ----
         if ($request->isMethod('post') && $request->input('do') === 'issue') {
             $borrowerId = (int) ($request->post('user_id') ?? 0);
             $equipmentId = (int) ($request->post('equipment_id') ?? 0);
             $quantity = (int) ($request->post('quantity') ?? 1);
+            $notes = trim((string) ($request->post('notes') ?? ''));
 
-            $result = $this->equipmentLoanService->issue($borrowerId, $equipmentId, $quantity);
+            $result = $this->equipmentLoanService->issue($borrowerId, $equipmentId, $quantity, $notes, (int) $request->user()->id);
 
             if ($result['success']) {
                 return redirect()
                     ->route('staff.equipment_loans')
-                    ->with('success', 'Equipment loan issued successfully.');
+                    ->with('success', 'Equipment issued.');
             }
 
             $errors = $result['errors'];
         }
 
-        // ---- Status filter toolbar (original lines 99-120) ------------------
+        if ($request->isMethod('post') && $request->input('do') === 'return') {
+            $returnResult = $this->equipmentLoanService->returnLoan(
+                (int) $request->post('loan_id', 0),
+                (int) $request->user()->id,
+            );
+
+            return redirect()
+                ->route('staff.equipment_loans')
+                ->with($returnResult['status'], $returnResult['message']);
+        }
+
         if ($request->isMethod('get') && $request->input('do') !== 'issue') {
             if ($statusFilter === 'overdue') {
                 $where = "WHERE l.status = 'borrowed' AND l.borrowed_at <= SUBDATE(NOW(), 1)";
@@ -94,35 +91,21 @@ class EquipmentLoansController extends Controller
             $where = '1=1';
         }
 
-        // ---- History using StaffHistory (replaces original manual SQL) ------------
         $search = trim((string) $request->query('q', ''));
-        $page = max(1, (int) $request->query('page', 1));
-        $perPage = 20;
-        $offset = ($page - 1) * $perPage;
 
         $filters = [
             'q' => $search,
             'status' => $statusFilter,
         ];
 
-        $result = StaffHistory::rows('equipment-loans', $filters, $perPage, $offset);
+        // Module histories feature: 10 newest matching loans only - the
+        // complete, paginated loan history lives behind the toolbar's
+        // View All action (history() below). ?page= is no longer read
+        // here.
+        $result = StaffHistory::rows('equipment-loans', $filters, 10, 0);
         $loans = $result['rows'];
-        $totalLoans = $result['total'];
         $historyError = $result['error'];
 
-        $totalPages = (int) ceil($totalLoans / $perPage);
-        $pagination = [
-            'current' => $page,
-            'total' => max(1, $totalPages),
-            'perPage' => $perPage,
-            'totalItems' => $totalLoans,
-            'baseUrl' => url('staff/equipment_loans'),
-            'query' => array_filter(['q' => $search, 'status' => $statusFilter]),
-        ];
-
-        // Create overdue loan notifications if any overdue loans exist
-        // (count + sweep moved into App\Services\EquipmentLoanService,
-        // Phase 4, Batch 2).
         $overdueCount = $this->equipmentLoanService->overdueAlertCount($statusFilter);
 
         return view('staff.equipment_loans', [
@@ -133,9 +116,10 @@ class EquipmentLoansController extends Controller
             'equipment' => $equipment,
             'loans' => $loans,
             'statusFilter' => $statusFilter,
-            'pagination' => $pagination,
             'overdueCount' => $overdueCount,
             'historyError' => $historyError,
         ]);
     }
+
+    // #endregion
 }

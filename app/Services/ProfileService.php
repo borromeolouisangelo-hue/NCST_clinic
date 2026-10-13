@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 
@@ -23,10 +24,13 @@ use Illuminate\Support\Facades\Validator;
  *
  *  - removePhoto(): ProfilePhoto::delete + photo IS NULL + audit.
  *
- *  - uploadPhoto(): the Validator (image sniffs the server-guessed
- *    extension, so a renamed non-image never reaches ProfilePhoto::store),
- *    then delete-old / store-new / photo update + audit; returns the
- *    validator's messages so the controller re-renders in-place on failure.
+ *  - uploadPhoto(): the Validator (mimes sniffs the ACTUAL content type,
+ *    so a renamed non-image or a GIF/WebP never reaches
+ *    ProfilePhoto::store; a header parse then confirms the payload is a
+ *    real image and enforces the dimension band; the size ceiling is the
+ *    app's established 2 MB), then delete-old / store-new / photo update
+ *    + audit; returns the validator's messages so the controller
+ *    re-renders in-place on failure.
  *
  *  The password branch is deliberately NOT here: it stays a three-line
  *  dispatch in the controller to PasswordChange (already the shared
@@ -135,14 +139,38 @@ class ProfileService
      */
     public function uploadPhoto(int $uid, ?string $currentPhoto, array $input): array
     {
-        // `image` sniffs the server-guessed extension, so a renamed
-        // non-image never reaches ProfilePhoto::store().
+        // `mimes` sniffs the server-guessed extension from the file's
+        // CONTENT, so a renamed non-image (or anything but a JPG, JPEG or
+        // PNG) never reaches ProfilePhoto::store(). The closure then parses
+        // the image header itself - it validates the actual payload and
+        // enforces the dimension band - on top of the size ceiling.
         $validator = Validator::make($input, [
-            'photo' => ['required', 'image', 'max:'.ProfilePhoto::MAX_KILOBYTES],
+            'photo' => [
+                'required',
+                'mimes:jpeg,jpg,png',
+                'max:'.ProfilePhoto::MAX_KILOBYTES,
+                function ($attribute, $value, $fail) {
+                    if (! $value instanceof UploadedFile) {
+                        $fail('The picture must be an image file.');
+
+                        return;
+                    }
+
+                    $info = @getimagesize($value->getRealPath());
+
+                    if ($info === false) {
+                        $fail('The picture must be an image file.');
+                    } elseif ($info[0] < ProfilePhoto::MIN_DIMENSION || $info[1] < ProfilePhoto::MIN_DIMENSION) {
+                        $fail('The picture must be at least '.ProfilePhoto::MIN_DIMENSION.' by '.ProfilePhoto::MIN_DIMENSION.' pixels.');
+                    } elseif ($info[0] > ProfilePhoto::MAX_DIMENSION || $info[1] > ProfilePhoto::MAX_DIMENSION) {
+                        $fail('The picture may not be larger than '.ProfilePhoto::MAX_DIMENSION.' by '.ProfilePhoto::MAX_DIMENSION.' pixels.');
+                    }
+                },
+            ],
         ], [
             'photo.required' => 'Choose a picture to upload.',
-            'photo.image' => 'The picture must be an image file.',
-            'photo.max' => 'The picture may not be greater than 2 MB.',
+            'photo.mimes' => 'The picture must be an image file.',
+            'photo.max' => 'The picture may not be greater than '.(int) round(ProfilePhoto::MAX_KILOBYTES / 1024).' MB.',
         ]);
 
         if ($validator->fails()) {

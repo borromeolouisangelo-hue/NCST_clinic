@@ -29,8 +29,12 @@
             </div>
             <div class="card-body">
                 <p class="mb-2"><strong>Complaint:</strong> {{ $c->complaint }}</p>
-                @if ($c->diagnosis)<p class="mb-2"><strong>Diagnosis:</strong> {{ $c->diagnosis }}</p>@endif
-                @if ($c->treatment)<p class="mb-2"><strong>Treatment:</strong> {{ $c->treatment }}</p>@endif
+                @if ($c->diagnosis)<p class="mb-2"><strong>Diagnosis:</strong> {{ $c->diagnosis }}
+                    @if ($c->diagnosis_image)<a href="{{ route('consultations.attachment', ['id' => $c->id, 'type' => 'diagnosis']) }}" target="_blank" rel="noopener" class="ms-1"><i class="bi bi-image-alt me-1"></i>View image</a>@endif
+                </p>@endif
+                @if ($c->treatment)<p class="mb-2"><strong>Treatment:</strong> {{ $c->treatment }}
+                    @if ($c->treatment_image)<a href="{{ route('consultations.attachment', ['id' => $c->id, 'type' => 'treatment']) }}" target="_blank" rel="noopener" class="ms-1"><i class="bi bi-image me-1"></i>View image</a>@endif
+                </p>@endif
                 <div class="row g-2 small text-muted mt-2">
                     @if ($c->blood_pressure)<div class="col-auto">BP: {{ $c->blood_pressure }}</div>@endif
                     @if ($c->temperature !== null)<div class="col-auto">Temp: {{ $c->temperature }}°C</div>@endif

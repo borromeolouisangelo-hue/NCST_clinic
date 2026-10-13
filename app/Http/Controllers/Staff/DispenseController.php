@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Staff;
 use App\Http\Controllers\Controller;
 use App\Services\AuditLogger;
 use App\Services\DispenseService;
+use App\Services\MedicineDailyLimit;
 use App\Services\StaffHistory;
 use App\Services\StockUnits;
 use App\Support\ShellContext;
@@ -14,57 +15,29 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\View\View;
 
 /**
- * Staff walk-in dispensing - port of staff/dispense.php (read-only reference).
+ * Walk-in dispensing page - port of staff/dispense.php (rule order, guards
+ * and error strings stay byte-identical); the decision tree lives in
+ * DispenseService, this class parses the request and renders.
  *
- * require_login(['staff']) becomes ['auth', 'role:staff'] route middleware;
- * the custom CSRF failure branch (flash + redirect) is Laravel's 419
- * (approved Phase 6 difference). The whole decision tree runs exactly like
- * the reference: field collection and the five-rule validation order, the
- * allergy conflict -> decision screen, the 24h duplicate guard, the stock
- * check, and the medicine_requests + deduct_stock_trace + dispense_logs
- * transaction (all-or-nothing, exception message surfaced as a form error).
- * fire_event('medicine.dispensed'|'medicine.declined') still has no listener
- * in the reference dispatcher; feature 2 replaced that dead seam with a
- * direct App\Services\Notify() call addressed to the patient (scoping), so
- * the patient's medicine_dispensed / medicine_declined switch now does
- * something.
- * set_flash(...) becomes ->with(...) : written but never rendered
- * (write-only legacy slot, see partials/flash.blade.php).
- *
- * Legacy quirks kept: ?user_id= preselects the patient even on GET while
- * medicine_id is POST-only; qty must be exactly 1 (so a missing quantity
- * reports the 1-unit rule before the reasonable-limit rule); the history
- * filter maps any unknown status to 'all'; history is capped at 200 rows.
- *
- * The four deduction guards the spec calls for are the ones above, kept as
- * they are: the 1-unit rule blocks an invalid piece count, medicine_stock()
- * plus deduct_stock_trace()'s insufficient-stock null (which the caller
- * rolls back) block negative stock and over-deduction, and the 24h
- * duplicate guard blocks a double deduction.
- *
- * Post-migration addition (feature 1, since replaced): $pieceStates feeds
- * the stock line under the quantity field - "Stock: 103 tablets" for
- * Individual items, "Stock: 8 unopened bottles · 1 opened bottle" for
- * Container + Partial / Roll + Partial items, which also get the
- * "Dispense from" (existing opened vs open new) and "Usage" (Small /
- * Moderate / Large, a record only) controls plus the Mark Depleted form.
- * Two POST additions sit in front of the five-rule validation: the
- * action=deplete dispatch (its own form - never needs patient/quantity
- * fields) and the two tracking rules for partial items. Everything else is
- * unchanged.
- *
- * Phase 3 (part 1): the POST decision tree that ran after the five-rule
- * validation (allergy conflict gate, 24h duplicate guard, stock check,
- * medicine_requests + deduct_stock_trace + dispense_logs transaction, audit
- * + patient notify) now lives in App\Services\DispenseService, injected
- * below. This class keeps the HTTP concerns: reading the request, the five
- * rules and the redirect/view response. Behaviour, error strings and query
- * order are unchanged.
+ * The old global duplicate guard (one request per patient per rolling 24
+ * hours, matching the same purpose text across unrelated items) was replaced
+ * by the per-medicine daily limit in MedicineDailyLimit: one request per
+ * user per specific tablet/capsule medicine per calendar day. First-aid and
+ * other non-tablet/capsule items are not subject to it.
  */
 class DispenseController extends Controller
 {
+    // #region Wiring
+
+    // Dispense mutations injected; this class only validates, parses and renders
     public function __construct(protected DispenseService $dispenseService) {}
 
+    // #endregion
+
+    // #region Dispense page
+
+    // Run walk-in dispensing: deplete POST, validation (patient, medicine, the 1-unit rule, the per-product reasonable limit, the per-medicine daily limit, override required), then the dispense service and history render
+    // <- POST (patient, medicine, qty, allergy decision, deplete), GET ?history_status/?q | -> view or redirect+flash | => stock deduction, audit, patient Notify (DispenseService)
     public function index(Request $request): View|RedirectResponse
     {
         $errors = [];
@@ -74,12 +47,6 @@ class DispenseController extends Controller
         $selPatient = (int) ($request->post('user_id') ?? $request->query('user_id') ?? 0);
         $selMedicine = (int) ($request->post('medicine_id') ?? 0);
 
-        // Mark Depleted - dispatched before the five-rule validation: the
-        // deplete form posts only action + medicine_id, so it must never be
-        // blocked by the patient/quantity rules. Opening (the "Open new
-        // container/roll" radio on a successful dispense) and dispensing are
-        // separate events; depletion is the third - one unit leaves stock
-        // through an OUT movement and the opened count drops (StockUnits).
         if ($request->isMethod('post') && (string) $request->post('action', '') === 'deplete') {
             $deplete = StockUnits::depleteOpened($selMedicine, (int) $request->user()->id);
 
@@ -110,7 +77,6 @@ class DispenseController extends Controller
             $allergyDecision = $request->post('allergy_decision') ?? '';
             $reasonableLimit = get_setting_int('default_dispense_limit', 10);
 
-            // Container/Roll + Partial controls (ignored for Individual items).
             $dispenseFrom = trim((string) $request->post('dispense_from', ''));
             $usage = strtolower(trim((string) $request->post('usage', '')));
             if (! in_array($usage, ['small', 'moderate', 'large'], true)) {
@@ -136,20 +102,26 @@ class DispenseController extends Controller
                 $errors[] = 'Please select a medicine.';
             }
             if ($qty !== 1) {
-                $errors[] = 'Medicine requests are limited to 1 unit per day.';
+                $errors[] = 'Each request is limited to 1 unit.';
             }
             if ($qty > $reasonableLimit) {
                 $errors[] = 'Quantity exceeds the reasonable limit for this product (max '.(int) $reasonableLimit.').';
+            }
+
+            // Per-medicine daily limit: one request per user per specific
+            // tablet/capsule medicine per calendar day. Eligibility comes
+            // from the unit dosage-form column - first-aid and other
+            // non-tablet/capsule items are never blocked by this rule.
+            if ($selPatient > 0 && $selMedicine > 0 && $productUnit !== null
+                && MedicineDailyLimit::appliesToUnit($productUnit)
+                && MedicineDailyLimit::alreadyRequestedToday($selPatient, $selMedicine)) {
+                $errors[] = 'You have already requested this medicine today. You may request it again tomorrow.';
             }
 
             if ($allergyDecision === 'accept' && $override === '') {
                 $errors[] = 'An override reason is required when accepting an allergy conflict.';
             }
 
-            // Tracking rules for Container + Partial / Roll + Partial items -
-            // appended after the five rules above (never reordered). The
-            // posted radio falls back to the sensible default when absent
-            // (no JS / older form state), exactly like the rendering does.
             if ($productUnit !== null && StockUnits::partial($productUnit)) {
                 $openedCount = StockUnits::openedCounts([$selMedicine])[$selMedicine] ?? 0;
                 if (! in_array($dispenseFrom, ['existing', 'new'], true)) {
@@ -162,8 +134,6 @@ class DispenseController extends Controller
                 }
                 $stockOnHand = medicine_stock($selMedicine);
                 if ($dispenseFrom === 'new' && $stockOnHand >= 1 && $stockOnHand - $openedCount < 1) {
-                    // Every unit on hand is already opened - the plain
-                    // "Insufficient stock" rule still owns the stock = 0 case.
                     $errors[] = 'No unopened '.$noun.' is left. Dispense from an existing opened '.$noun.' or add stock.';
                 }
             } else {
@@ -171,13 +141,6 @@ class DispenseController extends Controller
                 $usage = '';
             }
 
-            // The domain decision tree - allergy conflict gate, 24h duplicate
-            // guard, stock check, medicine_requests + deduct_stock_trace +
-            // dispense_logs transaction, audit row and patient Notify - moved
-            // verbatim into App\Services\DispenseService (Phase 3, part 1).
-            // The errors collected above are passed in, so the five-rule order
-            // and every guard stay exactly as they were; only HTTP (redirect,
-            // flash, view) remains here.
             $dispenseResult = $this->dispenseService->handle(
                 selPatient: $selPatient,
                 selMedicine: $selMedicine,
@@ -212,24 +175,18 @@ class DispenseController extends Controller
              WHERE u.role='user' ORDER BY p.first_name",
         );
 
-        // The reference computes stock and the per-option limit inside the
-        // option loop (staff/dispense.php:188). The list selects only
-        // id/name/unit/generic_name, so `$m['low_stock_threshold'] ?? 10` in
-        // the original always falls back to 10 and data-limit is 10 for every
-        // option - the same keys are kept missing here to preserve that.
         $medicines = DB::select('SELECT id, name, unit, generic_name FROM medicines WHERE is_active=1 ORDER BY name');
+        $requestedTodayIds = MedicineDailyLimit::requestedMedicineIdsToday($selPatient);
         foreach ($medicines as $m) {
             $m->stock = medicine_stock((int) $m->id);
             $m->limit = max(1, (int) ($m->low_stock_threshold ?? 10));
+            // Only eligible (tablet/capsule) items already requested by the
+            // selected patient today are marked - everything else stays
+            // requestable under its existing rules.
+            $m->blockedToday = MedicineDailyLimit::appliesToUnit($m->unit)
+                && in_array((int) $m->id, $requestedTodayIds, true);
         }
 
-        // Tracking state per item (App\Services\StockUnits): one settings
-        // query + one OUT query for the whole list. Individual items carry
-        // the package position (cell: "11/12 deducted", modal label:
-        // "Stock: 103 tablets"); Container + Partial / Roll + Partial items
-        // carry the opened counts behind the modal's "Stock: 8 unopened
-        // bottles · 1 opened bottle" line. The form shows the Dispense from
-        // / Usage controls only for the partial methods.
         $pieceStates = StockUnits::states($medicines);
 
         $search = trim((string) $request->query('q', ''));
@@ -237,32 +194,22 @@ class DispenseController extends Controller
         if (! in_array($historyStatus, ['all', 'dispensed', 'rejected'], true)) {
             $historyStatus = 'all';
         }
-        $page = max(1, (int) $request->query('page', 1));
-        $perPage = 20;
-        $offset = ($page - 1) * $perPage;
 
         $filters = [
             'q' => $search,
-            'status' => $historyStatus,
+            'history_status' => $historyStatus,
         ];
 
-        $result = StaffHistory::rows('dispense', $filters, $perPage, $offset);
+        // Module histories feature: 10 newest matching rows only - the
+        // complete, paginated dispensing history lives behind the
+        // toolbar's View All action (history() below). ?page= is no
+        // longer read here.
+        $result = StaffHistory::rows('dispense', $filters, 10, 0);
         $historyRows = $result['rows'];
-        $totalHistory = $result['total'];
         $historyError = $result['error'];
 
-        $totalPages = (int) ceil($totalHistory / $perPage);
-        $pagination = [
-            'current' => $page,
-            'total' => max(1, $totalPages),
-            'perPage' => $perPage,
-            'totalItems' => $totalHistory,
-            'baseUrl' => url('staff/dispense'),
-            'query' => array_filter(['q' => $search, 'history_status' => $historyStatus]),
-        ];
-
         return view('staff.dispense', [
-            'title' => 'Dispense',
+            'title' => 'Dispense Item',
             'shell' => ShellContext::fromUser($request->user(), activePath: 'staff/dispense'),
             'errors' => $errors,
             'conflicts' => $conflicts,
@@ -275,9 +222,9 @@ class DispenseController extends Controller
             'pieceStates' => $pieceStates,
             'historyStatus' => $historyStatus,
             'historyRows' => $historyRows,
-            'totalHistory' => $totalHistory,
             'historyError' => $historyError,
-            'pagination' => $pagination,
         ]);
     }
+
+    // #endregion
 }

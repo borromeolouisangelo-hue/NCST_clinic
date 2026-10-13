@@ -17,11 +17,13 @@ use Tests\TestCase;
  * Covers staff/certificates.php: the issue handler with its two exact
  * messages and crafted-POST quirks (lines 12-38), the MED numbering
  * (functions.php:720 - callers never pass a type, so excuse slips and fit
- * notes also get MED), the ?action=delete GET handler (40-45), the print
- * fetch (53-69, no ownership check), the search + 200-row cap (71-83) and
- * the dead ?type= filter (the SQL never reads it while the <select>
- * follows the raw parameter), plus user/my_certificates.php (own rows,
- * ?print= ownership in SQL).
+ * notes also get MED), the ?action=delete GET handler (40-45), the
+ * certificate view fetch (53-69, no ownership check; the original's
+ * ?print= + window.print() became ?view= - rendered read-only, never
+ * auto-printing), the search + 200-row cap (71-83) and the dead ?type=
+ * filter (the SQL never reads it while the <select> follows the raw
+ * parameter), plus user/my_certificates.php (own rows, ?print= ownership
+ * in SQL - the user flow keeps its print behaviour).
  *
  * SUBSTRING + CAST AS UNSIGNED run natively on SQLite 3.39 (verified), so
  * generate_cert_no() executes the identical SQL on both engines.
@@ -154,7 +156,7 @@ class CertificateTest extends TestCase
         $response->assertDontSee('Select a patient.');
     }
 
-    public function test_list_shows_rows_searches_and_caps_at_200(): void
+    public function test_list_shows_rows_searches_previews_10_and_history_paginates(): void
     {
         $staff = $this->makeStaff();
         $maria = $this->makePatient('Maria', 'Santos', 'student');
@@ -168,19 +170,72 @@ class CertificateTest extends TestCase
         $this->actingAs($staff)->get('/staff/certificates?q=Santos')->assertSee('Asthma exacerbation');
         $this->actingAs($staff)->get('/staff/certificates?q=clearance')->assertSee('Return to work clearance');
 
-        // List is capped at 200 rows (original LIMIT 200).
+        // Module histories feature: the list previews the 10 newest rows;
+        // the complete list lives behind View All at
+        // /staff/history?tab=certificates (100 records per page).
         for ($i = 0; $i < 205; $i++) {
             $this->makeCert($maria->id, $staff->id, 'medical', "Bulk $i");
         }
-        $body = $this->actingAs($staff)->get('/staff/certificates')->assertOk()->getContent();
-        $this->assertSame(200, substr_count($body, '?print='), 'LIMIT 200 must render exactly 200 print links');
+        $module = $this->actingAs($staff)->get('/staff/certificates')->assertOk();
+        $this->assertSame(10, substr_count($module->getContent(), '?view='), 'The list previews the 10 newest rows');
+        $module->assertSee(route('staff.history', ['tab' => 'certificates']));
+        $this->assertSame(0, substr_count($module->getContent(), 'Print certificate'), 'The list offers View, not Print.');
+
+        $page1 = $this->actingAs($staff)->get('/staff/history?tab=certificates')->assertOk();
+        // The history table is the shared partial the dashboard previews
+        // with, so its certificate rows keep the module's original
+        // print/delete actions; the module LIST is what moved to ?view=.
+        $this->assertSame(100, substr_count($page1->getContent(), '?print='));
+        $page1->assertSee('Certificates History')
+            ->assertSee('Certificates history pagination', false);
+
+        $page3 = $this->actingAs($staff)->get('/staff/history?tab=certificates&page=3')->assertOk();
+        $this->assertSame(8, substr_count($page3->getContent(), '?print='));
+    }
+
+    /**
+     * The module page's Filter <select> submits ?type= the module SQL has
+     * never read; on the history page it must actually filter (medical /
+     * excuse / fit), junk collapses to 'all' for dropdown and query, and
+     * the active type rides along in every pagination link.
+     */
+    public function test_history_type_filter_is_live_and_survives_pagination(): void
+    {
+        $staff = $this->makeStaff();
+        $maria = $this->makePatient('Maria', 'Santos', 'student');
+        for ($i = 0; $i < 3; $i++) {
+            $this->makeCert($maria->id, $staff->id, 'medical', "Bulk $i");
+        }
+        $this->makeCert($maria->id, $staff->id, 'excuse', 'Dental appointment');
+
+        $excuse = $this->actingAs($staff)->get('/staff/history?tab=certificates&type=excuse')->assertOk();
+        $excuse->assertSee('Dental appointment')
+            ->assertSee('<option value="excuse" selected>', false);
+        $this->assertSame(1, substr_count($excuse->getContent(), '?print='));
+
+        $junk = $this->actingAs($staff)->get('/staff/history?tab=certificates&type=student')->assertOk();
+        $junk->assertSee('<option value="all" selected>', false);
+        $this->assertSame(4, substr_count($junk->getContent(), '?print='));
+
+        // 105 medical certificates: the filtered set paginates with the
+        // type preserved in every link.
+        for ($i = 3; $i < 105; $i++) {
+            $this->makeCert($maria->id, $staff->id, 'medical', "Bulk $i");
+        }
+        $page1 = $this->actingAs($staff)->get('/staff/history?tab=certificates&type=medical')->assertOk();
+        $this->assertSame(100, substr_count($page1->getContent(), '?print='));
+        $page1->assertSee('type=medical', false);
+
+        $page2 = $this->actingAs($staff)->get('/staff/history?tab=certificates&type=medical&page=2')->assertOk();
+        $this->assertSame(5, substr_count($page2->getContent(), '?print='));
+        $page2->assertSee('type=medical', false);
     }
 
     // ---------------------------------------------------------------------
     // Issue (original 12-38)
     // ---------------------------------------------------------------------
 
-    public function test_valid_post_issues_audits_flashes_and_redirects_to_print(): void
+    public function test_valid_post_issues_audits_flashes_and_redirects_to_the_certificate_view(): void
     {
         $staff = $this->makeStaff();
         $patient = $this->makePatient('Anna', 'Cruz', 'student');
@@ -202,7 +257,7 @@ class CertificateTest extends TestCase
         $this->assertSame('3', (string) $cert->rest_days);
         $this->assertNotNull($cert->issued_at);
 
-        $response->assertRedirect(route('staff.certificates', ['print' => $cert->id]))
+        $response->assertRedirect(route('staff.certificates', ['view' => $cert->id]))
             ->assertSessionHas('success', 'Certificate issued.');
 
         $audit = DB::table('audit_logs')->where('action', 'issue_certificate')->first();
@@ -211,13 +266,15 @@ class CertificateTest extends TestCase
         $this->assertSame((int) $cert->id, (int) $audit->record_id);
         $this->assertSame("Issued certificate {$cert->cert_no}", $audit->details);
 
-        // The redirect target renders the printable certificate.
-        $this->actingAs($staff)->get('/staff/certificates?print='.$cert->id)
+        // The redirect target renders the certificate read-only - View
+        // replaces Print, so the browser print dialog is never triggered.
+        $this->actingAs($staff)->get('/staff/certificates?view='.$cert->id)
             ->assertOk()
             ->assertSee('MEDICAL CERTIFICATE')
             ->assertSee('Anna Cruz')
             ->assertSee('Recommended rest: 3 day(s).')
-            ->assertSee('No findings');
+            ->assertSee('No findings')
+            ->assertDontSee('window.print()');
     }
 
     public function test_cert_number_continues_the_max_sequence_and_keeps_med_for_every_type(): void
@@ -328,10 +385,11 @@ class CertificateTest extends TestCase
     }
 
     // ---------------------------------------------------------------------
-    // Print + the dead ?type= filter (original 53-69, 174-177, 244-248)
+    // Certificate view + the dead ?type= filter (original 53-69, 174-177,
+    // 244-248; the ?print= fetch + window.print() became ?view=)
     // ---------------------------------------------------------------------
 
-    public function test_print_renders_any_certificate_and_a_missing_print_falls_back_to_the_list(): void
+    public function test_view_renders_any_certificate_without_auto_printing_and_a_missing_view_falls_back_to_the_list(): void
     {
         $staff = $this->makeStaff();
         $patient = $this->makePatient('Pia', 'Gonzales', 'student');
@@ -345,19 +403,20 @@ class CertificateTest extends TestCase
             'rest_days' => 2,
         ]);
 
-        $print = $this->actingAs($staff)->get('/staff/certificates?print='.$id);
-        $print->assertOk()
+        $view = $this->actingAs($staff)->get('/staff/certificates?view='.$id);
+        $view->assertOk()
             ->assertSee('MEDICAL CERTIFICATE')
             ->assertSee('Pia Gonzales')
             ->assertSee('Exam exemption')
             ->assertSee('Migraine observed')
             ->assertSee('Recommended rest: 2 day(s).')
             ->assertSee('GERALINE S. GABUTERO, M.D.')
-            ->assertDontSee('No medical certificates created yet.');
+            ->assertDontSee('No medical certificates created yet.')
+            ->assertDontSee('window.print()');
 
-        // No ownership check on the staff print fetch - and an unknown id
+        // No ownership check on the staff view fetch - and an unknown id
         // renders the LIST branch (with whatever rows exist), not a 404.
-        $this->actingAs($staff)->get('/staff/certificates?print=999')
+        $this->actingAs($staff)->get('/staff/certificates?view=999')
             ->assertOk()
             ->assertSee('Exam exemption')
             ->assertDontSee('MEDICAL CERTIFICATE');

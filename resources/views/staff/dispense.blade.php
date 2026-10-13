@@ -1,41 +1,4 @@
-{{--
-    Staff Dispense - exact port of staff/dispense.php (original lines 147-347):
-    the dispensing modal with its allergy warning and decision flow, the
-    history toolbar, and the 200-row history table.
 
-    Approved differences: action URLs drop .php (routing convention since
-    Phase 4); the modal form carries @csrf instead of csrf_token (Phase 6) -
-    the blank line after @csrf compensates PHP eating one newline after the
-    compiled directive so the following hidden input keeps the original's
-    exact leading whitespace; $pt['x'] / $row['x'] become ->x (stdClass rows,
-    same values); $stock/$limit move from the option loop into the controller
-    (same values, same keys missing so data-limit stays 10); POST CSRF
-    failure raises 419 (Phase 6); the redirect flashes (dispense outcome and
-    the Mark Depleted result) are carried to the user by
-    partials/flash-toast - partials/flash.blade.php itself still renders
-    nothing (write-only legacy slot); a scoped rule in style.css keeps this
-    dialog within the viewport (fixed card header, scrolling card body) so
-    the taller form (tracking block + allergy decision state) stays
-    reachable on short viewports.
-
-    Legacy quirks kept: ?user_id= preselects the patient on GET but
-    medicine_id is POST-only; qty must be exactly 1 (a missing quantity
-    reports the 1-unit rule before the limit rule); an unknown ?history_status
-    shows every row with no selected option; history is capped at 200 rows;
-    the conflicts list, decision block and auto-open script re-render on any
-    POST that reached the conflict checks.
-
-    Tracking feature: #dispensePieceState is the "Stock: ..." line under the
-    quantity help text fed by the controller's $pieceStates JSON - the exact
-    piece count for Individual items ("Stock: 103 tablets"), the
-    unopened/opened counts for Container + Partial / Roll + Partial items
-    ("Stock: 8 unopened bottles · 1 opened bottle"), which also render the
-    Dispense from radios (existing opened vs open new), the Usage radios
-    (Small / Moderate / Large - a record only, never a quantity) and the
-    separate Mark Depleted form. The old Full / Half Empty / Empty fill-level
-    line is gone with the fill-level system. The option markup itself is
-    untouched.
---}}
 @extends('layouts.dashboard')
 
 @section('title', $title)
@@ -83,15 +46,16 @@
                         <select name="medicine_id" id="dispenseMedicineSelect" class="form-select" required>
                             <option value="">-- select item --</option>
                             @foreach ($medicines as $m)
-                                <option value="{{ (int) $m->id }}" data-stock="{{ (int) $m->stock }}" data-limit="{{ (int) $m->limit }}" {{ $selMedicine === (int) $m->id ? 'selected' : '' }}>
-                                    {{ $m->name }}{{ $m->generic_name ? ' (' . $m->generic_name . ')' : '' }} — {{ $m->unit }} · stock {{ (int) $m->stock }}                                </option>
+                                <option value="{{ (int) $m->id }}" data-stock="{{ (int) $m->stock }}" data-limit="{{ (int) $m->limit }}" data-requested-today="{{ $m->blockedToday ? '1' : '0' }}" {{ $selMedicine === (int) $m->id ? 'selected' : '' }}>
+                                    {{ $m->name }}{{ $m->generic_name ? ' (' . $m->generic_name . ')' : '' }} — {{ $m->unit }} · stock {{ (int) $m->stock }}{{ $m->blockedToday ? ' · already requested today' : '' }}                                </option>
                             @endforeach
                         </select>
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Quantity *</label>
                         <input type="number" name="quantity" id="dispenseQuantity" class="form-control" min="1" value="1" max="1" required>
-                        <div id="dispenseQuantityHelp" class="form-text">Use the item unit shown above (box, roll, tube, bottle, piece, etc.).</div>
+                        <div id="dispenseQuantityHelp" class="form-text"></div>
+                        <div id="dispenseDailyLimitHelp" class="form-text"></div>
                         <div id="dispensePieceState" class="form-text" aria-live="polite"></div>
                     </div>
                     <div class="mb-3 d-none" id="dispenseTrackingBlock">
@@ -140,7 +104,7 @@
                         </div>
                         <div class="d-flex gap-2">
                             <button type="submit" name="allergy_decision" value="accept" class="btn btn-danger flex-fill"><i class="bi bi-check-circle me-1"></i> Accept and Dispense</button>
-                            <button type="submit" name="allergy_decision" value="reject" class="btn btn-outline-secondary flex-fill" formnovalidate><i class="bi bi-x-circle me-1"></i> Decline Request</button>
+                            <button type="submit" name="allergy_decision" value="reject" class="btn btn-outline-secondary flex-fill" formnovalidate><i class="bi bi-x-circle me-1"></i> Reject Request</button>
                         </div>
                         <div class="mt-3">
                             <button type="button" class="btn btn-outline-secondary w-100" data-bs-dismiss="modal">Cancel</button>
@@ -179,8 +143,8 @@
                     <div class="col-auto">
                         <label class="form-label">Filter</label>
                         <form method="get" class="d-inline">
-                            <select name="history_status" class="form-select form-select-sm" onchange="this.form.submit()">
-                                <option value="all" {{ $historyStatus === 'all' ? 'selected' : '' }}>All Status</option>
+                            <select name="history_status" class=" form-select form-select-sm" onchange="this.form.submit()">
+                                <option value="all" {{ $historyStatus === 'all' ? 'selected' : '' }}>All</option>
                                 <option value="dispensed" {{ $historyStatus === 'dispensed' ? 'selected' : '' }}>Dispensed</option>
                                 <option value="rejected" {{ $historyStatus === 'rejected' ? 'selected' : '' }}>Rejected</option>
                             </select>
@@ -189,45 +153,22 @@
                     <div class="col d-flex flex-wrap gap-2 justify-content-start">
                         <button type="button" class="btn btn-primary text-nowrap" data-search-trigger="#dispenseHistorySearch"><i class="bi bi-search me-1"></i> Search</button>
                         <button type="button" class="btn btn-accent text-nowrap" data-bs-toggle="modal" data-bs-target="#dispenseModal"><i class="bi bi-prescription2 me-1"></i> Dispense Item</button>
-                        
                     </div>
                 </div>
                 
             </div>
         </div>
+
+                    <div class="d-flex align-items-center w-100 mb-2">
+                        <a href="{{ route('staff.history', ['tab' => 'dispense']) }}" class="btn btn-sm btn-outline-primary text-nowrap ms-auto"><i class="bi bi-list-ul me-1"></i> View All</a>
+                    </div>
                 
         <div class="card">
                 <div class="table-responsive">
-                    {!! \App\Services\StaffHistory::table('dispense', $historyRows, 'dispenseTable') !!}
+                    {!! \App\Services\StaffHistory::table('dispense', $historyRows, 'dispenseTable', 'No medicine history in this view.') !!}
                 </div>
             </div>
         </div>
-
-    @if ($pagination['total'] > 1)
-    <nav aria-label="Dispense pagination" class="mt-3">
-        <ul class="pagination justify-content-center">
-            @if ($pagination['current'] > 1)
-                <li class="page-item">
-                    <a class="page-link" href="{{ $pagination['baseUrl'] }}?{{ http_build_query(array_merge($pagination['query'], ['page' => $pagination['current'] - 1])) }}" aria-label="Previous">
-                        <i class="bi bi-chevron-left"></i>
-                    </a>
-                </li>
-            @endif
-            @for ($i = max(1, $pagination['current'] - 2); $i <= min($pagination['total'], $pagination['current'] + 2); $i++)
-                <li class="page-item {{ $i === $pagination['current'] ? 'active' : '' }}">
-                    <a class="page-link" href="{{ $pagination['baseUrl'] }}?{{ http_build_query(array_merge($pagination['query'], ['page' => $i])) }}">{{ $i }}</a>
-                </li>
-            @endfor
-            @if ($pagination['current'] < $pagination['total'])
-                <li class="page-item">
-                    <a class="page-link" href="{{ $pagination['baseUrl'] }}?{{ http_build_query(array_merge($pagination['query'], ['page' => $pagination['current'] + 1])) }}" aria-label="Next">
-                        <i class="bi bi-chevron-right"></i>
-                    </a>
-                </li>
-            @endif
-        </ul>
-    </nav>
-    @endif
 </div>
 </div>
 </div>
@@ -305,6 +246,7 @@ document.addEventListener('DOMContentLoaded', function () {
         var selected = medicineSelect.options[medicineSelect.selectedIndex];
         var stock = selected && selected.dataset.stock ? parseInt(selected.dataset.stock, 10) : 0;
         stock = Number.isFinite(stock) ? stock : 0;
+        var requestedToday = !!(selected && selected.dataset.requestedToday === '1');
         var maxQty = 1;
         quantityInput.min = '1';
         quantityInput.max = String(maxQty);
@@ -318,8 +260,14 @@ document.addEventListener('DOMContentLoaded', function () {
             helpText.textContent = 'This item is out of stock. Add stock before dispensing.';
             quantityInput.value = '0';
             quantityInput.disabled = true;
+        } else if (requestedToday) {
+            // Only THIS medicine is blocked for this patient today - every
+            // other eligible or non-restricted item stays requestable.
+            helpText.textContent = 'This patient has already requested this medicine today. You may request it again tomorrow. Other medicines are not affected.';
+            quantityInput.value = '0';
+            quantityInput.disabled = true;
         } else {
-            helpText.textContent = 'Medicine requests are limited to 1 unit per day. Use the item unit shown above.';
+            helpText.textContent = 'Use the item unit shown above (box, roll, tube, bottle, piece, etc.).';
             quantityInput.disabled = false;
             if (parseInt(quantityInput.value, 10) < 1) {
                 quantityInput.value = '1';

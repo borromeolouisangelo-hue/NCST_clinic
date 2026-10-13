@@ -58,10 +58,11 @@ class Navigation
                 ['path' => 'staff/sick_leaves', 'icon' => 'bi-thermometer', 'label' => 'Sick Leaves'],
             ]],
             ['section' => 'Inventory', 'items' => [
-                ['path' => 'admin/medicines', 'icon' => 'bi-capsule', 'label' => 'Medicines'],
-                ['path' => 'admin/categories', 'icon' => 'bi-tags', 'label' => 'Categories'],
-                ['path' => 'admin/suppliers', 'icon' => 'bi-truck', 'label' => 'Suppliers'],
-                ['path' => 'admin/equipment', 'icon' => 'bi-tools', 'label' => 'Equipment Catalog'],
+                // The four standalone catalog pages (medicines, categories,
+                // suppliers, equipment catalog) are retired: staff manage
+                // inventory through the staff Inventory page and an approval
+                // workflow, so this section holds only the admin's queue.
+                ['path' => 'admin/inventory_requests', 'icon' => 'bi-inbox', 'label' => 'Inventory Requests'],
             ]],
             ['section' => 'Records', 'items' => [
                 ['path' => 'staff/history', 'icon' => 'bi-card-list', 'label' => 'History'],

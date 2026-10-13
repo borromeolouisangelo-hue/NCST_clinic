@@ -1,23 +1,4 @@
-{{--
-    User (student / employee) dashboard - exact port of user/dashboard.php
-    (original lines 80-193): medical-form and unread-notification alerts, the
-    four personal metric cards, My Tasks, the employee-only Recent Sick Leave
-    list and the sick-leave modal whose form self-posts to this same page.
 
-    Approved differences: action URLs drop .php (routing convention since
-    Phase 4); the modal form carries @csrf instead of csrf_token (Phase 6
-    convention); $_POST[...] repopulation uses request()->post(...) so only
-    the request body is read, exactly like the original's $_POST access;
-    the original's set_flash() success text - never rendered by the original
-    because get_flash() has no callers - surfaces through the shared flash
-    partial, the same convention logout/register follow since Phase 5/6.
-
-    Task links (medical_form / my_requests / my_consultations) and the
-    notifications View All target 404 until their feature phases.
-
-    Feature 3: Added personal statistics cards below the main metric cards.
-    Feature 6: Added Quick Actions grid with responsive layout.
---}}
 @extends('layouts.dashboard')
 
 @section('title', $title)
@@ -59,11 +40,12 @@
                         <div class="card-body d-grid gap-2">
                             <a href="{{ url('user/medical_form') }}" class="btn btn-outline-primary"><i class="bi bi-file-medical me-1"></i> Update Medical Form</a>
                             <a href="{{ url('user/my_requests') }}" class="btn btn-outline-primary"><i class="bi bi-activity me-1"></i> Open My Activity</a>
+                            <a href="{{ url('user/my_consultations') }}" class="btn btn-outline-primary"><i class="bi bi-clipboard2-pulse me-1"></i> View My Consultations</a>
                             
                             @if ($isEmployee)
                                 <button type="button" class="btn btn-accent" data-bs-toggle="modal" data-bs-target="#sickLeaveModal"><i class="bi bi-thermometer me-1"></i> Notify Staff (Sick Leave)</button>
                             @endif
-                            <div class="alert alert-info small mb-0">Medicine requests are entered by clinic staff when you visit the clinic in person.</div>
+                            <div class="alert alert-info small mb-0">Medicine requests are entered by clinic staff when you visit the clinic in person. One request per tablet or capsule medicine per day. Other eligible medicines may be requested separately. First-aid supplies and other non-tablet/capsule items are not subject to this restriction.</div>
                             @if ($allergyCount === 0)
                                 <div class="alert-allergy p-2 small mb-0">
                                     <i class="bi bi-info-circle"></i> You have no recorded allergies. Add them in your Medical Form so staff can be alerted before dispensing.

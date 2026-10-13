@@ -124,9 +124,15 @@ class ProfileTest extends TestCase
 
     protected function tearDown(): void
     {
+        // Retry the unlink a few times: a real image written here can be
+        // held briefly by Windows real-time scanning, and a leftover file
+        // would make the NEXT test's upload collide with a locked target.
         foreach ($this->writtenPhotos as $path) {
-            if (is_file($path)) {
-                @unlink($path);
+            for ($try = 0; $try < 20 && is_file($path); $try++) {
+                if (@unlink($path)) {
+                    break;
+                }
+                usleep(50_000);
             }
         }
         $this->writtenPhotos = [];
@@ -558,7 +564,9 @@ class ProfileTest extends TestCase
         $response = $this->actingAs($student)->post('/user/profile', [
             'form_action' => 'photo',
             'photo_action' => 'upload',
-            'photo' => UploadedFile::fake()->create('avatar.png', 4),
+            // Real PNG bytes (this environment has no GD, so the hand-built
+            // png() helper stands in for UploadedFile::fake()->image()).
+            'photo' => UploadedFile::fake()->createWithContent('avatar.png', $this->png(64, 64)),
         ]);
 
         $response->assertRedirect(route('user.profile'));
@@ -610,7 +618,10 @@ class ProfileTest extends TestCase
         $response = $this->actingAs($student)->post('/user/profile', [
             'form_action' => 'photo',
             'photo_action' => 'upload',
-            'photo' => UploadedFile::fake()->create('big.png', 3072),
+            // A header-valid PNG padded past the ceiling, so the size rule
+            // is the only one that can trip - and its message is the one
+            // pinned below.
+            'photo' => UploadedFile::fake()->createWithContent('big.png', $this->png(64, 64).str_repeat(' ', 3072 * 1024)),
         ]);
 
         $response->assertOk();
@@ -632,7 +643,9 @@ class ProfileTest extends TestCase
         $this->actingAs($student)->post('/user/profile', [
             'form_action' => 'photo',
             'photo_action' => 'upload',
-            'photo' => UploadedFile::fake()->create('avatar.png', 4),
+            // Real PNG bytes (this environment has no GD, so the hand-built
+            // png() helper stands in for UploadedFile::fake()->image()).
+            'photo' => UploadedFile::fake()->createWithContent('avatar.png', $this->png(64, 64)),
         ])->assertRedirect(route('user.profile'));
 
         $this->assertFileExists($path);
@@ -654,6 +667,149 @@ class ProfileTest extends TestCase
         $body = $this->actingAs($student)->get('/user/profile')->getContent();
         $this->assertStringContainsString('account-avatar-empty', $body);
         $this->assertStringNotContainsString('> Remove</button>', $body);
+    }
+
+    public function test_a_corrupt_payload_wearing_an_image_name_is_rejected_by_content_inspection(): void
+    {
+        $student = $this->seedStudent();
+
+        // NAMED like a PNG (the mimes rule reads the server-guessed type),
+        // but the bytes are not an image - only the getimagesize() content
+        // check can catch this.
+        $response = $this->actingAs($student)->post('/user/profile', [
+            'form_action' => 'photo',
+            'photo_action' => 'upload',
+            'photo' => UploadedFile::fake()->createWithContent('avatar.png', 'pretend png bytes'),
+        ]);
+
+        $response->assertOk();
+        $response->assertSee('The picture must be an image file.', false);
+
+        $this->assertNull(DB::table('profiles')->where('user_id', $student->id)->value('photo'));
+        $this->assertFileDoesNotExist(public_path('assets/images/profiles/'.$student->id.'.png'));
+        $this->assertSame(0, DB::table('audit_logs')->count());
+    }
+
+    public function test_a_picture_below_the_minimum_dimension_is_rejected(): void
+    {
+        $student = $this->seedStudent();
+
+        $response = $this->actingAs($student)->post('/user/profile', [
+            'form_action' => 'photo',
+            'photo_action' => 'upload',
+            'photo' => UploadedFile::fake()->createWithContent('avatar.png', $this->png(32, 32)),
+        ]);
+
+        $response->assertOk();
+        $response->assertSee('The picture must be at least 64 by 64 pixels.', false);
+
+        $this->assertNull(DB::table('profiles')->where('user_id', $student->id)->value('photo'));
+        $this->assertSame(0, DB::table('audit_logs')->count());
+    }
+
+    public function test_a_picture_beyond_the_maximum_dimension_is_rejected(): void
+    {
+        $student = $this->seedStudent();
+
+        $response = $this->actingAs($student)->post('/user/profile', [
+            'form_action' => 'photo',
+            'photo_action' => 'upload',
+            // 6001x64: both sides clear the 64 px floor, but the width is
+            // past the ceiling - only the upper bound may trip.
+            'photo' => UploadedFile::fake()->createWithContent('wide.png', $this->png(6001, 64)),
+        ]);
+
+        $response->assertOk();
+        $response->assertSee('The picture may not be larger than 6000 by 6000 pixels.', false);
+
+        $this->assertNull(DB::table('profiles')->where('user_id', $student->id)->value('photo'));
+        $this->assertSame(0, DB::table('audit_logs')->count());
+    }
+
+    public function test_a_real_jpeg_is_accepted_and_stored_under_the_owner(): void
+    {
+        $student = $this->seedStudent();
+
+        // Read-only reuse of the JPEG already checked into
+        // assets/images/profiles (469x612, ~19 KB): real JPEG bytes the
+        // content sniff must accept. The upload writes {id}.jpg (the
+        // server-guessed extension); the fixture itself is never written
+        // to nor registered for cleanup.
+        $jpeg = @file_get_contents(public_path('assets/images/profiles/2.jpg'));
+
+        if ($jpeg === false) {
+            $this->markTestSkipped('The checked-in JPEG fixture is missing.');
+        }
+
+        $expected = $student->id.'.jpg';
+        $path = $this->trackPhoto($expected);
+
+        $response = $this->actingAs($student)->post('/user/profile', [
+            'form_action' => 'photo',
+            'photo_action' => 'upload',
+            'photo' => UploadedFile::fake()->createWithContent('portrait.jpg', $jpeg),
+        ]);
+
+        $response->assertRedirect(route('user.profile'));
+        $this->assertSame($expected, DB::table('profiles')->where('user_id', $student->id)->value('photo'));
+        $this->assertFileExists($path);
+    }
+
+    public function test_an_upload_cannot_reach_another_users_picture(): void
+    {
+        $student = $this->seedStudent();
+        $employee = $this->seedEmployee();
+
+        $path = $this->trackPhoto($student->id.'.png');
+
+        $this->actingAs($student)->post('/user/profile', [
+            'form_action' => 'photo',
+            'photo_action' => 'upload',
+            'photo' => UploadedFile::fake()->createWithContent('avatar.png', $this->png(64, 64)),
+        ])->assertRedirect(route('user.profile'));
+
+        // The owner's row and file are written; the other account sees no
+        // column write and no audit row - $uid is always the auth user.
+        $this->assertSame($student->id.'.png', DB::table('profiles')->where('user_id', $student->id)->value('photo'));
+        $this->assertFileExists($path);
+        $this->assertNull(DB::table('profiles')->where('user_id', $employee->id)->value('photo'));
+        $this->assertSame(0, DB::table('audit_logs')->where('user_id', $employee->id)->count());
+    }
+
+    public function test_the_picture_card_shows_the_identity_header_and_the_square_crop_interface(): void
+    {
+        $student = $this->seedStudent();
+
+        // Seed a picture state, so the <img> branches (card + topbar) and
+        // their default-avatar onerror fallbacks are on screen.
+        $path = $this->trackPhoto($student->id.'.png');
+        file_put_contents($path, $this->png(64, 64));
+        DB::table('profiles')->where('user_id', $student->id)->update(['photo' => $student->id.'.png']);
+
+        $body = $this->actingAs($student)->get('/user/profile')->assertOk()->getContent();
+
+        // The avatar sits beside the user's name and account information,
+        // with a default-avatar fallback for a missing or broken image.
+        $this->assertStringContainsString('id="profilePhotoIdentity"', $body);
+        $this->assertStringContainsString('<h5 class="mb-1">Old Name</h5>', $body);
+        $this->assertStringContainsString('@student1', $body);
+        $this->assertStringContainsString('src="'.asset('assets/images/profiles/'.$student->id.'.png').'"', $body);
+        $this->assertStringContainsString("onerror=\"this.style.display='none'", $body);
+
+        // The topbar avatar falls back to the same default icon on a
+        // failed load.
+        $this->assertStringContainsString('onerror="this.outerHTML=', $body);
+
+        // The square crop interface: form, JPG/PNG picker, stage, zoom
+        // slider, circular preview and cancel - hidden until a file is
+        // chosen.
+        $this->assertStringContainsString('id="photoForm"', $body);
+        $this->assertStringContainsString('accept="image/jpeg,image/png"', $body);
+        $this->assertStringContainsString('id="photoCropper" class="d-none mt-3"', $body);
+        $this->assertStringContainsString('id="photoCropStage"', $body);
+        $this->assertStringContainsString('id="photoCropZoom"', $body);
+        $this->assertStringContainsString('id="photoCropPreview"', $body);
+        $this->assertStringContainsString('id="photoCropCancel"', $body);
     }
 
     // ---------------------------------------------------------------------
@@ -721,6 +877,27 @@ class ProfileTest extends TestCase
         ]);
 
         return $user->fresh();
+    }
+
+    /**
+     * Minimal valid PNG of the given size, built without GD.
+     *
+     * This environment has no GD extension, so UploadedFile::fake()->image()
+     * is unavailable; a hand-rolled header plus one zlib-compressed bitmap
+     * is enough for getimagesize() and the mimes sniff to see real pixels.
+     */
+    private function png(int $width, int $height): string
+    {
+        $raw = str_repeat("\x00".str_repeat("\xff\xff\xff", $width), $height);
+
+        $chunk = static function (string $type, string $data): string {
+            return pack('N', strlen($data)).$type.$data.pack('N', crc32($type.$data));
+        };
+
+        return "\x89PNG\r\n\x1a\n"
+            .$chunk('IHDR', pack('NNCCCCC', $width, $height, 8, 2, 0, 0, 0))
+            .$chunk('IDAT', gzcompress($raw))
+            .$chunk('IEND', '');
     }
 
     /** Register a Feature 5 picture path for teardown cleanup; returns it. */

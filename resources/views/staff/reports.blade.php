@@ -37,7 +37,11 @@
         <div class="text-muted small">Report period: {{ fmt_dt($from, 'M d, Y') }} to {{ fmt_dt($to, 'M d, Y') }}</div>
     </div>
 
-    
+    <div class="row g-3 mb-3">
+        <div class="col-6 col-lg-4"><div class="metric-card"><div class="metric-icon icon-primary"><i class="bi bi-clipboard2-pulse"></i></div><div class="metric-value">{{ $consCount }}</div><div class="metric-label">Consultations</div></div></div>
+        <div class="col-6 col-lg-4"><div class="metric-card"><div class="metric-icon icon-warning"><i class="bi bi-capsule"></i></div><div class="metric-value">{{ $requestCount }}</div><div class="metric-label">Medicine Units Requested</div></div></div>
+        <div class="col-6 col-lg-4"><div class="metric-card"><div class="metric-icon icon-success"><i class="bi bi-tools"></i></div><div class="metric-value">{{ $loanCount }}</div><div class="metric-label">Equipment Units Borrowed</div></div></div>
+    </div>
 
 <div class="card mb-3 no-print">
     <div class="card-body">

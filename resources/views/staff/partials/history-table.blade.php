@@ -22,7 +22,7 @@
                             <td>{!! $r['status'] === 'active' ? '<span class="badge bg-success">Active</span>' : '<span class="badge bg-secondary">Inactive</span>' !!}</td>
                             <td class="text-end">
                                 <a href="{{ url('staff/patients?id=' . (int) $r['id']) }}" class="btn btn-sm btn-outline-primary" title="View patient"><i class="bi bi-eye"></i></a>
-                                <a href="{{ url('staff/consultations?patient_id=' . (int) $r['id']) }}" class="btn btn-sm btn-accent" title="New consultation"><i class="bi bi-clipboard2-plus"></i></a>
+                                
                             </td>
                         </tr>
                         @break
@@ -33,6 +33,8 @@
                             <td>{{ mb_strimwidth((string) ($r['complaint'] ?? ''), 0, 40, '…') }}</td>
                             <td>{{ mb_strimwidth((string) ($r['diagnosis'] ?? ''), 0, 40, '…') }}</td>
                             <td class="text-end">
+                                @if (! empty($r['diagnosis_image']))<a href="{{ route('consultations.attachment', ['id' => (int) $r['id'], 'type' => 'diagnosis']) }}" class="btn btn-sm btn-outline-secondary" title="View diagnosis image" target="_blank" rel="noopener"><i class="bi bi-image-alt"></i></a>@endif
+                                @if (! empty($r['treatment_image']))<a href="{{ route('consultations.attachment', ['id' => (int) $r['id'], 'type' => 'treatment']) }}" class="btn btn-sm btn-outline-secondary" title="View treatment image" target="_blank" rel="noopener"><i class="bi bi-image"></i></a>@endif
                                 <a href="{{ url('staff/consultations?edit=' . (int) $r['id']) }}" class="btn btn-sm btn-outline-primary" title="Edit consultation"><i class="bi bi-pencil"></i></a>
                                 <a href="{{ url('staff/consultations?action=delete&id=' . (int) $r['id']) }}" class="btn btn-sm btn-outline-danger" title="Delete consultation" data-confirm="Delete this consultation?" data-swal-delete="consultation"><i class="bi bi-trash"></i></a>
                             </td>

@@ -9,19 +9,24 @@ use Illuminate\Support\Facades\DB;
  * App\Http\Controllers\Staff\DispenseController::index() (Phase 3, part 1).
  *
  * The controller keeps every HTTP concern: reading the request, the
- * five-rule validation order (patient, medicine, the 1-unit rule, the
- * per-product reasonable limit, override required) and the redirect/flash
- * contract. This service owns what happens next, in exactly the order the
- * legacy staff/dispense.php port ran it:
+ * validation order (patient, medicine, the 1-unit rule, the per-product
+ * reasonable limit, the per-medicine daily limit, override required) and
+ * the redirect/flash contract. This service owns what happens next, in
+ * exactly the order the legacy staff/dispense.php port ran it:
  *
  *  1. the allergy conflict -> decision screen branch (reject maps to the
  *     'rejected' enum member; the UI labels it "Declined"),
- *  2. the 24-hour duplicate request guard,
- *  3. the stock check,
- *  4. the medicine_requests + deduct_stock_trace + dispense_logs
+ *  2. the stock check,
+ *  3. the medicine_requests + deduct_stock_trace + dispense_logs
  *     DB::transaction (all-or-nothing; deduct_stock_trace()'s insufficient
  *     stock null rolls the whole thing back),
- *  5. the audit row and the patient-facing Notify alert.
+ *  4. the audit row and the patient-facing Notify alert.
+ *
+ * The legacy 24-hour duplicate guard (same medicine OR same purpose text,
+ * rolling window, every item) is gone: it is now the per-medicine daily
+ * limit - one request per user per specific tablet/capsule medicine per
+ * calendar day - enforced as controller validation through
+ * App\Services\MedicineDailyLimit before this service ever runs.
  *
  * Every error string is byte-identical to the controller's originals and the
  * catch (\Throwable) behaviour is preserved: any failure - including one
@@ -61,12 +66,12 @@ class DispenseService
      *                                         the controller used)
      * @param  int  $staffId  authenticated staff user id ($request->user()->id)
      * @param  array<int, string>  $errors  validation errors already collected
-     *                                      by the controller (five-rule order,
-     *                                      plus the two tracking rules for
-     *                                      partial items). Only appended to,
-     *                                      never reordered: the guards below
-     *                                      short-circuit on it exactly like
-     *                                      the original code.
+     *                                      by the controller (validation order
+     *                                      above, plus the two tracking rules
+     *                                      for partial items). Only appended
+     *                                      to, never reordered: the guards
+     *                                      below short-circuit on it exactly
+     *                                      like the original code.
      * @param  string  $dispenseFrom  'existing' | 'new' | '' - container/roll
      *                                source; ignored (and normalized to '')
      *                                for Individual items. '' falls back to
@@ -104,10 +109,6 @@ class DispenseService
                 // Stored value must be the enum member 'rejected'; the UI labels it "Declined".
                 $outcome = 'rejected';
             }
-        }
-
-        if (! $errors && recent_medicine_request_conflict($selPatient, $selMedicine, $reason)) {
-            $errors[] = 'This patient already has the same medicine or purpose recorded within the last 24 hours.';
         }
 
         if (! $errors && ! $showAllergyDecision) {

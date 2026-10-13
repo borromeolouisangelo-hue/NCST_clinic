@@ -132,6 +132,61 @@ class PatientTest extends TestCase
             $table->timestamp('dispensed_at')->useCurrent();
         });
 
+        // The tables the Patient Activity History feed reads (shapes mirror
+        // the live schema, same as StaffDashboardTest): medicine_requests,
+        // equipment + equipment_loans, medical_certificates and sick_leaves.
+        Schema::create('medicine_requests', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('user_id');
+            $table->unsignedBigInteger('medicine_id');
+            $table->integer('quantity')->default(1);
+            $table->string('reason', 255)->nullable();
+            $table->string('status', 20)->default('dispensed');
+            $table->timestamp('requested_at')->useCurrent();
+            $table->unsignedBigInteger('processed_by')->nullable();
+            $table->timestamp('processed_at')->nullable();
+        });
+
+        Schema::create('equipment', function (Blueprint $table) {
+            $table->id();
+            $table->string('name', 150);
+            $table->integer('total_qty')->default(1);
+            $table->integer('available_qty')->default(1);
+            $table->boolean('is_active')->default(true);
+        });
+
+        Schema::create('equipment_loans', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('user_id');
+            $table->unsignedBigInteger('equipment_id');
+            $table->integer('quantity')->default(1);
+            $table->date('borrow_date');
+            $table->timestamp('borrowed_at')->useCurrent();
+            $table->date('due_date')->nullable();
+            $table->date('return_date')->nullable();
+            $table->string('status', 20)->default('borrowed');
+        });
+
+        Schema::create('medical_certificates', function (Blueprint $table) {
+            $table->id();
+            $table->string('cert_no', 40)->nullable();
+            $table->unsignedBigInteger('user_id');
+            $table->string('cert_type', 30)->default('medical');
+            $table->string('purpose', 255)->nullable();
+            $table->unsignedBigInteger('issued_by')->nullable();
+            $table->timestamp('issued_at')->useCurrent();
+        });
+
+        Schema::create('sick_leaves', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('user_id');
+            $table->text('reason');
+            $table->date('start_date');
+            $table->date('end_date')->nullable();
+            $table->string('status', 20)->default('pending');
+            $table->timestamp('created_at')->useCurrent();
+        });
+
         // Shell pieces the shared layout reads (same as LoginTest).
         Schema::create('notifications', function (Blueprint $table) {
             $table->id();
@@ -294,11 +349,14 @@ class PatientTest extends TestCase
             'consultation_date' => '2026-09-20 10:30:00',
         ]);
         DB::table('medicines')->insert(['name' => 'Paracetamol 500mg']);
-        DB::table('dispense_logs')->insert([
+        // Dispensing writes medicine_requests rows (the table the dispense
+        // page, the staff dispense history and the new activity feed read).
+        DB::table('medicine_requests')->insert([
             'user_id' => $patient->id,
             'medicine_id' => DB::table('medicines')->value('id'),
             'quantity' => 6,
-            'dispensed_at' => '2026-09-20 10:35:00',
+            'status' => 'dispensed',
+            'requested_at' => '2026-09-20 10:35:00',
         ]);
 
         $response = $this->actingAs($staff)->get('/staff/patients?id='.$patient->id);
@@ -322,31 +380,37 @@ class PatientTest extends TestCase
         $response->assertSee('Ana Dela Cruz');
         $response->assertSee('(09181234567)');
 
-        // Latest medical record card
+        // Latest medical record card. The redesign folds the linked
+        // allergies list into this card and drops the free-text
+        // allergies_text column ("Peanuts") from the rendered output.
         $response->assertSee('Latest Medical Record');
         $response->assertSee('O+');
         $response->assertSee('2026-2027 1st');
-        $response->assertSee('Peanuts');
         $response->assertSee('Asthma');
 
-        // Allergies card
-        $response->assertSee('Recorded Medicine Allergies');
+        // Allergies: same data, now listed inside the medical record card
+        // from the linked user_allergies rows (there is no separate card).
+        $response->assertSee('Allergies:');
         $response->assertSee('Amoxicillin');
         $response->assertSee('Severe');
         $response->assertSee('Hives');
 
-        // Recent Consultations / Recent Dispensed Medicines were removed from
-        // the overview even though the records above exist - the history stays
-        // on /staff/consultations and /staff/dispense. ('Clinic Staff' is not
-        // asserted absent: the topbar account dropdown always renders the
-        // logged-in staff's own name.)
+        // Recent Activity: ONE combined card previews the 10 newest
+        // activities (consultations, dispensing, equipment loans,
+        // certificates, employee sick leaves); the old per-type Recent
+        // Consultations / Recent Dispensed Medicines cards stay gone. The
+        // header button opens the dedicated full-history page. ('Clinic
+        // Staff' is not asserted absent: the topbar account dropdown always
+        // renders the logged-in staff's own name.)
+        $response->assertSee('Recent Activity');
+        $response->assertSee('View All Activities');
+        $response->assertSee('staff/patient_activities?id='.$patient->id, false);
+        $response->assertSee('Persistent cough for three days now'); // consultation complaint, untruncated
+        $response->assertSee('Paracetamol 500mg x 6');
+        $response->assertSee('<span class="badge bg-success">Dispensed</span>', false);
         $response->assertDontSee('Recent Consultations');
-        $response->assertDontSee('Common cold');
-        $response->assertDontSee('Sep 20, 2026');
-        $response->assertDontSee('…'); // mb_strimwidth truncation lived on the complaint cell
         $response->assertDontSee('Recent Dispensed Medicines');
-        $response->assertDontSee('Paracetamol 500mg');
-        $response->assertDontSee('>6<', false); // quantity cell, right-aligned
+        $response->assertDontSee('Common cold'); // the diagnosis is not inlined next to the complaint
     }
 
     public function test_employee_profile_shows_employee_details_instead_of_student(): void
@@ -367,7 +431,9 @@ class PatientTest extends TestCase
         $response->assertSee('Clerk');
         $response->assertDontSee('Student No.');
         $response->assertSee('No medical record submitted yet.');
-        $response->assertSee('No linked allergies recorded.');
+        // "No linked allergies recorded." now sits inside the medical
+        // record card, so it cannot show for a patient with no record.
+        $response->assertDontSee('No linked allergies recorded.');
         $response->assertDontSee('No consultations.');
         $response->assertDontSee('No dispensing records.');
     }

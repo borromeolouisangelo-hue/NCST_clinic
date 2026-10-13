@@ -126,10 +126,11 @@ class ProfileController extends Controller
                     ->with('success', 'Profile picture removed.');
             }
 
-            // The Validator (image sniff), the file swap, the column update
-            // and the audit row live in App\Services\ProfileService
-            // (Phase 4, Batch 2); failure returns here for an in-place
-            // re-render, exactly like the original else-branch.
+            // The Validator (content sniff + size/dimension rules), the
+            // file swap, the column update and the audit row live in
+            // App\Services\ProfileService (Phase 4, Batch 2); failure
+            // returns here for an in-place re-render, exactly like the
+            // original else-branch.
             $result = $this->profileService->uploadPhoto($uid, $data['photo'] ?? null, $request->all());
 
             if ($result['success']) {

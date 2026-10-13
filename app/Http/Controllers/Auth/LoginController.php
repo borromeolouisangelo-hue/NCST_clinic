@@ -14,28 +14,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\View\View;
 
-/**
- * Login flow - port of auth/login.php.
- *
- * The check order is byte-identical to the original:
- *
- *  1. signed in already      -> redirect to own dashboard (original lines 7-9)
- *  2. empty username/password-> "Please enter your username and password."
- *  3. block window hit       -> "Too many failed login attempts..." (no lookup)
- *  4. lookup username OR email (grouped OR, LIMIT 1 equivalent)
- *  5. no user / bad password -> record failed attempt, "Invalid username or password."
- *  6. status !== 'active'    -> "Your account is inactive..." (original records
- *                               NO failed attempt on this branch - kept)
- *  7. success                -> clear the username's failed rows, sign in
- *                               (SessionGuard regenerates the session id =
- *                               fixation protection), audit 'login', flash
- *                               "Welcome back, {name}!", redirect to the role
- *                               dashboard.
- *
- * Credentials are checked with Hash::check() + Auth::login() - never
- * Auth::attempt() - so the existing cost-10 bcrypt hashes are verified as-is
- * and never rewritten.
- */
+
 class LoginController extends Controller
 {
     /**

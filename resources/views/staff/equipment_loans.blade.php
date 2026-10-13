@@ -136,37 +136,16 @@
                 
             </div>
         </div>
+
+                    <div class="d-flex align-items-center w-100 mb-2">
+                        <a href="{{ route('staff.history', ['tab' => 'equipment-loans']) }}" class="btn btn-sm btn-outline-primary text-nowrap ms-auto"><i class="bi bi-list-ul me-1"></i> View All</a>
+                    </div>
+
         <div class="card">
             <div class="table-responsive">
-                {!! \App\Services\StaffHistory::table('equipment-loans', $loans, 'loanTable') !!}
+                {!! \App\Services\StaffHistory::table('equipment-loans', $loans, 'loanTable', 'No loans in this view.') !!}
             </div>
         </div>
-
-    @if (($pagination['total'] ?? 0) > 1)
-    <nav aria-label="Equipment loan pagination" class="mt-3">
-        <ul class="pagination justify-content-center">
-            @if ($pagination['current'] > 1)
-                <li class="page-item">
-                    <a class="page-link" href="{{ $pagination['baseUrl'] }}?{{ http_build_query(array_merge($pagination['query'], ['page' => $pagination['current'] - 1])) }}" aria-label="Previous">
-                        <i class="bi bi-chevron-left"></i>
-                    </a>
-                </li>
-            @endif
-            @for ($i = max(1, $pagination['current'] - 2); $i <= min($pagination['total'], $pagination['current'] + 2); $i++)
-                <li class="page-item {{ $i === $pagination['current'] ? 'active' : '' }}">
-                    <a class="page-link" href="{{ $pagination['baseUrl'] }}?{{ http_build_query(array_merge($pagination['query'], ['page' => $i])) }}">{{ $i }}</a>
-                </li>
-            @endfor
-            @if ($pagination['current'] < $pagination['total'])
-                <li class="page-item">
-                    <a class="page-link" href="{{ $pagination['baseUrl'] }}?{{ http_build_query(array_merge($pagination['query'], ['page' => $pagination['current'] + 1])) }}" aria-label="Next">
-                        <i class="bi bi-chevron-right"></i>
-                    </a>
-                </li>
-            @endif
-        </ul>
-    </nav>
-    @endif
 </div>
 </div>
 @if ($errors)<script>document.addEventListener('DOMContentLoaded', function () { var modal = document.getElementById('issueEquipmentModal'); if (modal && window.bootstrap) new bootstrap.Modal(modal).show(); });</script>@endif
